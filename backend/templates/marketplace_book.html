@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Consultation - Tax Savings Marketplace</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; background: #f8fafb; }
+
+        header { background: white; border-bottom: 1px solid #e5e7eb; padding: 1rem 0; }
+        .navbar { max-width: 1200px; margin: 0 auto; padding: 0 20px; display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.5rem; font-weight: bold; color: #2563eb; text-decoration: none; }
+
+        main { max-width: 900px; margin: 0 auto; padding: 2rem 20px; }
+
+        .container { background: white; border: 1px solid #e5e7eb; border-radius: 0.75rem; overflow: hidden; }
+        .container-header { background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%); color: white; padding: 2rem; }
+        .container-header h1 { font-size: 1.875rem; margin-bottom: 0.5rem; }
+        .container-header p { opacity: 0.9; }
+
+        .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; padding: 2rem; }
+
+        .form-section h2 { font-size: 1.25rem; margin-bottom: 1rem; color: #1f2937; }
+        .form-group { margin-bottom: 1.5rem; }
+        label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: #374151; }
+        input, select, textarea { width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-family: inherit; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+
+        .date-time-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+        .sidebar { border-left: 1px solid #e5e7eb; padding-left: 2rem; }
+        .sidebar h3 { font-size: 1.125rem; margin-bottom: 1.5rem; color: #1f2937; }
+
+        .price-item { display: flex; justify-content: space-between; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #e5e7eb; }
+        .price-label { color: #64748b; }
+        .price-value { font-weight: 600; color: #1f2937; }
+
+        .price-subtotal { padding: 1rem; background: #f3f4f6; border-radius: 0.375rem; margin: 1rem 0; }
+        .subtotal-row { display: flex; justify-content: space-between; margin-bottom: 0.75rem; }
+        .subtotal-row.total { font-size: 1.25rem; font-weight: bold; color: #2563eb; border-top: 2px solid white; padding-top: 0.75rem; margin-top: 0.75rem; }
+
+        .commission-info { background: #eff6ff; border: 1px solid #bfdbfe; padding: 1rem; border-radius: 0.375rem; margin: 1rem 0; font-size: 0.875rem; color: #1e40af; }
+
+        .btn-container { display: flex; gap: 1rem; margin-top: 2rem; }
+        .btn { padding: 1rem; border: none; border-radius: 0.375rem; cursor: pointer; font-weight: 500; font-size: 1rem; }
+        .btn-primary { background: #2563eb; color: white; flex: 1; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+        .btn-secondary { background: #e5e7eb; color: #1f2937; }
+        .btn-secondary:hover { background: #d1d5db; }
+
+        .alert { padding: 1rem; border-radius: 0.375rem; margin-bottom: 1rem; }
+        .alert-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .alert-error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+
+        footer { background: #1f2937; color: white; padding: 2rem 0; text-align: center; margin-top: 3rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="navbar">
+            <a href="/" class="logo">💰 Tax Professionals</a>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <div class="container-header">
+                <h1>Book Your Consultation</h1>
+                <p>Secure your appointment with a tax professional</p>
+            </div>
+
+            <div class="grid">
+                <div>
+                    <form id="bookingForm">
+                        <div class="form-section">
+                            <h2>Select Your Appointment</h2>
+
+                            <div class="form-group">
+                                <label for="rateCard">Service *</label>
+                                <select id="rateCard" required>
+                                    <option value="">Choose a service...</option>
+                                </select>
+                            </div>
+
+                            <div class="date-time-grid">
+                                <div class="form-group">
+                                    <label for="appointmentDate">Date *</label>
+                                    <input type="date" id="appointmentDate" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="appointmentTime">Time *</label>
+                                    <input type="time" id="appointmentTime" required>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="duration">Duration (minutes) *</label>
+                                <input type="number" id="duration" min="30" max="480" value="60" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="notes">Notes (optional)</label>
+                                <textarea id="notes" rows="3" placeholder="Describe your tax situation or questions..."></textarea>
+                            </div>
+                        </div>
+
+                        <div class="btn-container">
+                            <a href="marketplace_browse.html" class="btn btn-secondary">Back</a>
+                            <button type="submit" class="btn btn-primary" id="submitBtn">Confirm Booking</button>
+                        </div>
+                    </form>
+
+                    <div id="confirmationMessage" class="alert alert-success" style="display: none; margin-top: 1rem;">
+                        <strong>Success!</strong> Your consultation has been booked. Check your dashboard for confirmation details.
+                    </div>
+                </div>
+
+                <div class="sidebar">
+                    <h3>Price Breakdown</h3>
+
+                    <div class="price-item">
+                        <span class="price-label">Service Rate</span>
+                        <span class="price-value" id="servicePrice">$0.00</span>
+                    </div>
+
+                    <div class="commission-info">
+                        <strong>How our pricing works:</strong>
+                        <p>Professional receives 80% of your consultation fee. Platform commission: 20%</p>
+                    </div>
+
+                    <div class="price-subtotal">
+                        <div class="subtotal-row">
+                            <span>Consultation Fee</span>
+                            <span id="consultationFee">$0.00</span>
+                        </div>
+                        <div class="subtotal-row">
+                            <span>Platform Fee (20%)</span>
+                            <span id="platformFee">$0.00</span>
+                        </div>
+                        <div class="subtotal-row total">
+                            <span>Total Amount</span>
+                            <span id="totalAmount">$0.00</span>
+                        </div>
+                    </div>
+
+                    <div style="background: #f0fdf4; padding: 1rem; border-radius: 0.375rem; font-size: 0.875rem; color: #166534;">
+                        <strong>Professional earns:</strong> <span id="professionalEarns">$0.00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 Tax Savings Marketplace. All rights reserved.</p>
+    </footer>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:8000/api';
+        const params = new URLSearchParams(window.location.search);
+        const professionalId = params.get('professional_id');
+        const profileId = params.get('profile_id');
+
+        let selectedRateCard = null;
+
+        async function loadRateCards() {
+            try {
+                const response = await fetch(`${API_BASE}/professionals/${profileId}`);
+                const professional = await response.json();
+
+                const rateCardSelect = document.getElementById('rateCard');
+                professional.rate_cards.forEach(card => {
+                    const option = document.createElement('option');
+                    option.value = card.id;
+                    option.textContent = `${card.service_name} - $${card.price}`;
+                    option.dataset.price = card.price;
+                    option.dataset.duration = card.duration_minutes;
+                    rateCardSelect.appendChild(option);
+                });
+
+                // Set minimum date to today
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                document.getElementById('appointmentDate').min = tomorrow.toISOString().split('T')[0];
+            } catch (error) {
+                console.error('Error loading rate cards:', error);
+            }
+        }
+
+        document.getElementById('rateCard').addEventListener('change', (e) => {
+            selectedRateCard = {
+                id: e.target.value,
+                price: parseFloat(e.target.options[e.target.selectedIndex].dataset.price),
+                duration: parseInt(e.target.options[e.target.selectedIndex].dataset.duration)
+            };
+            updatePriceDisplay();
+        });
+
+        document.getElementById('duration').addEventListener('change', updatePriceDisplay);
+
+        function updatePriceDisplay() {
+            if (!selectedRateCard) return;
+
+            const duration = parseInt(document.getElementById('duration').value);
+            let totalPrice = selectedRateCard.price;
+
+            // For hourly rates, multiply by hours
+            if (duration > selectedRateCard.duration) {
+                const extraHours = (duration - selectedRateCard.duration) / 60;
+                totalPrice = selectedRateCard.price * (duration / 60);
+            }
+
+            const commission = totalPrice * 0.20;
+            const professionalEarns = totalPrice - commission;
+
+            document.getElementById('servicePrice').textContent = `$${selectedRateCard.price.toFixed(2)}`;
+            document.getElementById('consultationFee').textContent = `$${totalPrice.toFixed(2)}`;
+            document.getElementById('platformFee').textContent = `$${commission.toFixed(2)}`;
+            document.getElementById('totalAmount').textContent = `$${totalPrice.toFixed(2)}`;
+            document.getElementById('professionalEarns').textContent = `$${professionalEarns.toFixed(2)}`;
+        }
+
+        document.getElementById('bookingForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!selectedRateCard) {
+                alert('Please select a service');
+                return;
+            }
+
+            const date = document.getElementById('appointmentDate').value;
+            const time = document.getElementById('appointmentTime').value;
+            const duration = parseInt(document.getElementById('duration').value);
+
+            try {
+                const response = await fetch(`${API_BASE}/consultations/`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        professional_id: parseInt(professionalId),
+                        rate_card_id: parseInt(selectedRateCard.id),
+                        scheduled_at: new Date(`${date}T${time}`).toISOString(),
+                        duration_minutes: duration,
+                        notes: document.getElementById('notes').value
+                    })
+                });
+
+                if (response.ok) {
+                    document.getElementById('bookingForm').style.display = 'none';
+                    document.getElementById('confirmationMessage').style.display = 'block';
+                    setTimeout(() => {
+                        window.location.href = '/dashboard/client.html';
+                    }, 2000);
+                } else {
+                    alert('Failed to book consultation. Please try again.');
+                }
+            } catch (error) {
+                console.error('Error booking consultation:', error);
+                alert('Error booking consultation');
+            }
+        });
+
+        // Load on page load
+        loadRateCards();
+    </script>
+</body>
+</html>

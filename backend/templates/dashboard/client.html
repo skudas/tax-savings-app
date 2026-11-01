@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Manage your tax consultations, messages, and booking history.">
+  <title>Client Dashboard | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <main class="container">
+    <div id="dashboardRoot">
+      <div class="loading-block" style="padding-top:5rem"><div class="spinner"></div><span>Loading your dashboard...</span></div>
+    </div>
+  </main>
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('client');
+      renderFooter();
+
+      const root = document.getElementById('dashboardRoot');
+      let currentUser = null;
+      let bookings = [];
+      let conversations = [];
+      let errors = { bookings: null, messages: null };
+      let activeTab = queryParam('tab') || 'upcoming';
+
+      function safeMeetingUrl(value) {
+        if (!value) return '';
+        try {
+          const url = new URL(value);
+          return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+        } catch (error) {
+          return '';
+        }
+      }
+
+      function messageLink(userId, name) {
+        return `/messages.html?user_id=${encodeURIComponent(userId)}&name=${encodeURIComponent(name || '')}`;
+      }
+
+      function skeleton() {
+        root.innerHTML = `
+          <div class="dashboard-head">
+            <div>
+              <div class="skeleton skeleton-line w-40" style="height:12px"></div>
+              <div class="skeleton skeleton-line w-60" style="height:34px;margin-top:.6rem"></div>
+              <div class="skeleton skeleton-line w-80"></div>
+            </div>
+          </div>
+          <div class="stat-grid">
+            ${Array.from({ length: 4 }).map(() => `
+              <div class="stat-card"><div class="skeleton skeleton-avatar"></div><div style="flex:1"><div class="skeleton skeleton-line w-60"></div><div class="skeleton skeleton-line w-40" style="margin:0"></div></div></div>`).join('')}
+          </div>
+          <div class="card"><div class="card-head"><div class="skeleton skeleton-line w-40"></div></div><div class="card-body">${spinnerBlock('Loading consultations...')}</div></div>`;
+      }
+
+      function renderAuth() {
+        renderAuthWall(root, {
+          title: 'Sign in to your client dashboard',
+          message: 'Track upcoming consultations, message your tax professional, and review past bookings from one secure place.'
+        });
+      }
+
+      function getClientBookings() {
+        return (bookings || []).filter((booking) => Number(booking.client_id) === Number(currentUser.id));
+      }
+
+      function getUpcoming(list) {
+        return list
+          .filter(bookingIsUpcoming)
+          .slice()
+          .sort((a, b) => (parseDate(a.scheduled_at)?.getTime() || 0) - (parseDate(b.scheduled_at)?.getTime() || 0));
+      }
+
+      function getHistory(list) {
+        return list
+          .filter((booking) => !bookingIsUpcoming(booking))
+          .slice()
+          .sort((a, b) => (parseDate(b.scheduled_at)?.getTime() || 0) - (parseDate(a.scheduled_at)?.getTime() || 0));
+      }
+
+      function renderStats(upcoming, clientBookings) {
+        const completed = clientBookings.filter((booking) => String(booking.status).toLowerCase() === 'completed').length;
+        const invested = clientBookings
+          .filter((booking) => String(booking.status).toLowerCase() !== 'cancelled')
+          .reduce((sum, booking) => sum + Number(booking.total_price || 0), 0);
+        const unread = (conversations || []).reduce((sum, conv) => sum + Number(conv.unread_count || 0), 0);
+
+        return `
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="icon-box">${icon('calendar', 'icon-lg')}</div>
+              <div class="stat-meta"><span>Upcoming</span><strong>${upcoming.length}</strong><small>Appointment${upcoming.length === 1 ? '' : 's'} scheduled</small></div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box green">${icon('checkCircle', 'icon-lg')}</div>
+              <div class="stat-meta"><span>Completed</span><strong>${completed}</strong><small>Consultations finished</small></div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box purple">${icon('dollar', 'icon-lg')}</div>
+              <div class="stat-meta"><span>Total invested</span><strong>${money(invested)}</strong><small>Excludes cancelled bookings</small></div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box amber">${icon('message', 'icon-lg')}</div>
+              <div class="stat-meta"><span>Unread messages</span><strong>${unread}</strong><small>${unread ? 'Reply to your professionals' : 'You are all caught up'}</small></div>
+            </div>
+          </div>`;
+      }
+
+      function renderAppointment(booking) {
+        const date = parseDate(booking.scheduled_at) || new Date();
+        const status = String(booking.status || '').toLowerCase();
+        const cancelable = status === 'pending' || status === 'confirmed';
+        const meeting = safeMeetingUrl(booking.meeting_link);
+        const professional = booking.professional_name || 'Your professional';
+
+        return `
+          <div class="appointment-card">
+            <div class="appt-date">
+              <span>${date.toLocaleDateString('en-US', { month: 'short' })}</span>
+              <strong>${date.getDate()}</strong>
+            </div>
+            <div class="appt-main">
+              <h3>${escapeHtml(booking.service_name || 'Consultation')} ${statusBadge(status)}</h3>
+              <p>with ${escapeHtml(professional)}</p>
+              <div class="appt-meta">
+                <span>${icon('clock', 'icon-sm')} ${formatTime(booking.scheduled_at)} · ${durationLabel(booking.duration_minutes)}</span>
+                <span>${icon('calendar', 'icon-sm')} ${formatDate(booking.scheduled_at)}</span>
+              </div>
+            </div>
+            <div class="appt-side">
+              <div class="price"><span>Total</span><strong>${money(booking.total_price, 2)}</strong></div>
+              <div class="appt-actions">
+                <a class="btn btn-outline btn-sm" href="${messageLink(booking.professional_id, professional)}">${icon('message', 'icon-sm')} Message</a>
+                ${meeting ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(meeting)}" target="_blank" rel="noopener noreferrer">${icon('video', 'icon-sm')} Join</a>` : ''}
+                ${cancelable ? `<button class="btn btn-soft-danger btn-sm" type="button" data-cancel-id="${booking.id}">Cancel</button>` : ''}
+              </div>
+            </div>
+          </div>`;
+      }
+
+      function renderUpcoming(upcoming) {
+        if (errors.bookings) {
+          return errorState(errors.bookings, 'retryDashboard');
+        }
+        if (!upcoming.length) {
+          return emptyState({
+            icon: 'calendar',
+            title: 'No upcoming consultations',
+            message: 'Browse vetted tax professionals and book a consultation that fits your schedule.',
+            action: { href: '/marketplace/browse.html', label: 'Find a tax professional' }
+          });
+        }
+        return `<div class="appointment-list">${upcoming.map(renderAppointment).join('')}</div>`;
+      }
+
+      function renderMessages() {
+        if (errors.messages) {
+          return errorState(errors.messages, 'retryDashboard');
+        }
+        if (!conversations.length) {
+          return emptyState({
+            icon: 'message',
+            title: 'No conversations yet',
+            message: 'When you book or message a professional, your conversations will appear here.',
+            action: { href: '/marketplace/browse.html', label: 'Find an expert' }
+          });
+        }
+        return `
+          <div class="conv-list">
+            ${conversations.map((conv) => `
+              <a class="conv-preview" href="${messageLink(conv.user_id, conv.user_name)}">
+                ${avatar(conv.user_name, 'avatar-sm')}
+                <div class="conv-preview-main">
+                  <strong>${escapeHtml(conv.user_name)}</strong>
+                  <p>${escapeHtml(conv.last_message || 'Start the conversation')}</p>
+                </div>
+                <div class="conv-preview-side">
+                  <span>${conv.last_message_at ? timeAgo(conv.last_message_at) : ''}</span>
+                  ${conv.unread_count ? `<span class="unread-pill">${conv.unread_count}</span>` : ''}
+                </div>
+              </a>`).join('')}
+          </div>`;
+      }
+
+      function renderHistory(history) {
+        if (errors.bookings) {
+          return errorState(errors.bookings, 'retryDashboard');
+        }
+        if (!history.length) {
+          return emptyState({
+            icon: 'file',
+            title: 'No past consultations',
+            message: 'Your completed and cancelled appointments will be kept here for your records.'
+          });
+        }
+        return `
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>Date</th><th>Service</th><th>Professional</th><th>Total</th><th>Status</th><th></th></tr>
+              </thead>
+              <tbody>
+                ${history.map((booking) => `
+                  <tr>
+                    <td><span class="strong">${formatDate(booking.scheduled_at)}</span><br><span class="tiny muted">${formatTime(booking.scheduled_at)}</span></td>
+                    <td>${escapeHtml(booking.service_name || 'Consultation')}</td>
+                    <td>${escapeHtml(booking.professional_name || '—')}</td>
+                    <td class="strong">${money(booking.total_price, 2)}</td>
+                    <td>${statusBadge(booking.status)}</td>
+                    <td class="text-right"><a class="btn btn-ghost btn-sm" href="${messageLink(booking.professional_id, booking.professional_name)}">${icon('message', 'icon-sm')} Message</a></td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`;
+      }
+
+      function renderDashboard() {
+        const clientBookings = getClientBookings();
+        const upcoming = getUpcoming(clientBookings);
+        const history = getHistory(clientBookings);
+        const firstName = currentUser.first_name || 'there';
+
+        root.innerHTML = `
+          <div class="dashboard-head">
+            <div>
+              <span class="eyebrow">${icon('home', 'icon-sm')} Client dashboard</span>
+              <h1>Welcome back, ${escapeHtml(firstName)}</h1>
+              <p>Keep track of your consultations, messages, and tax planning history.</p>
+            </div>
+            <div class="row">
+              <a class="btn btn-outline" href="/messages.html">${icon('message', 'icon-sm')} Inbox ${(conversations || []).reduce((sum, conv) => sum + Number(conv.unread_count || 0), 0) ? `<span class="unread-pill">${(conversations || []).reduce((sum, conv) => sum + Number(conv.unread_count || 0), 0)}</span>` : ''}</a>
+              <a class="btn btn-primary" href="/marketplace/browse.html">${icon('plus', 'icon-sm')} Book consultation</a>
+            </div>
+          </div>
+          ${renderStats(upcoming, clientBookings)}
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h2>Your consultations</h2>
+                <p class="small muted">Appointments, conversations, and past bookings</p>
+              </div>
+              <div class="tabs" role="tablist" aria-label="Dashboard sections">
+                <button class="tab-btn ${activeTab === 'upcoming' ? 'active' : ''}" data-tab="upcoming" type="button" role="tab" aria-selected="${activeTab === 'upcoming'}">Upcoming <span class="tab-count">${upcoming.length}</span></button>
+                <button class="tab-btn ${activeTab === 'messages' ? 'active' : ''}" data-tab="messages" type="button" role="tab" aria-selected="${activeTab === 'messages'}">Messages <span class="tab-count">${(conversations || []).length}</span></button>
+                <button class="tab-btn ${activeTab === 'history' ? 'active' : ''}" data-tab="history" type="button" role="tab" aria-selected="${activeTab === 'history'}">History <span class="tab-count">${history.length}</span></button>
+              </div>
+            </div>
+            <div class="dash-tab-content ${activeTab === 'upcoming' ? 'active' : ''}" id="tab-upcoming" role="tabpanel">
+              ${renderUpcoming(upcoming)}
+            </div>
+            <div class="dash-tab-content ${activeTab === 'messages' ? 'active' : ''}" id="tab-messages" role="tabpanel">
+              ${renderMessages()}
+            </div>
+            <div class="dash-tab-content ${activeTab === 'history' ? 'active' : ''}" id="tab-history" role="tabpanel">
+              ${renderHistory(history)}
+            </div>
+          </div>
+          <div class="alert alert-info mt-4">
+            ${icon('info')}
+            <div class="small"><strong>Tip:</strong> Message your professional before the appointment to share documents or specific questions. Meeting links appear here once your booking is confirmed.</div>
+          </div>`;
+
+        bindDashboardEvents();
+      }
+
+      function bindDashboardEvents() {
+        root.querySelectorAll('[data-tab]').forEach((button) => {
+          button.addEventListener('click', () => {
+            activeTab = button.dataset.tab;
+            root.querySelectorAll('[data-tab]').forEach((item) => {
+              item.classList.toggle('active', item === button);
+              item.setAttribute('aria-selected', String(item === button));
+            });
+            root.querySelectorAll('.dash-tab-content').forEach((panel) => panel.classList.remove('active'));
+            const panel = document.getElementById(`tab-${activeTab}`);
+            if (panel) panel.classList.add('active');
+            const url = new URL(window.location.href);
+            url.searchParams.set('tab', activeTab);
+            window.history.replaceState({}, '', url);
+          });
+        });
+
+        root.querySelectorAll('[data-cancel-id]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const confirmed = await confirmDialog({
+              title: 'Cancel this consultation?',
+              message: 'The professional will be notified and the time will be released. This cannot be undone.',
+              confirmText: 'Cancel booking',
+              cancelText: 'Keep booking',
+              danger: true
+            });
+            if (!confirmed) return;
+            setButtonLoading(button, true);
+            try {
+              await api(`/consultations/${button.dataset.cancelId}`, { method: 'DELETE' });
+              showToast('Consultation cancelled.', 'success');
+              await loadData(currentUser);
+            } catch (error) {
+              showToast(error.message || 'Could not cancel the consultation.', 'error');
+              setButtonLoading(button, false);
+            }
+          });
+        });
+
+        root.querySelectorAll('#retryDashboard').forEach((button) => {
+          button.addEventListener('click', () => loadData(currentUser));
+        });
+      }
+
+      async function loadData(user) {
+        currentUser = user;
+        skeleton();
+        const results = await Promise.allSettled([
+          api('/consultations/my-bookings?limit=100'),
+          api('/messages/conversations')
+        ]);
+
+        if (results[0].status === 'fulfilled') {
+          bookings = Array.isArray(results[0].value) ? results[0].value : [];
+          errors.bookings = null;
+        } else {
+          bookings = [];
+          errors.bookings = results[0].reason?.message || 'Consultations could not be loaded.';
+        }
+
+        if (results[1].status === 'fulfilled') {
+          conversations = Array.isArray(results[1].value) ? results[1].value : [];
+          errors.messages = null;
+        } else {
+          conversations = [];
+          errors.messages = results[1].reason?.message || 'Messages could not be loaded.';
+        }
+
+        if (errors.bookings && errors.messages) {
+          root.innerHTML = `
+            <div class="dashboard-head"><div><span class="eyebrow">Client dashboard</span><h1>Welcome back, ${escapeHtml(user.first_name || 'there')}</h1></div></div>
+            <div class="card"><div class="card-body">
+              <div class="empty-state" style="border:0">
+                <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+                <h3>We couldn't load your dashboard</h3>
+                <p>${escapeHtml(errors.bookings)}</p>
+                <button class="btn btn-primary" id="retryDashboard" type="button">Try again</button>
+              </div>
+            </div></div>`;
+          const retry = document.getElementById('retryDashboard');
+          if (retry) retry.addEventListener('click', () => loadData(currentUser));
+          return;
+        }
+
+        renderDashboard();
+      }
+
+      async function init() {
+        try {
+          const user = await getCurrentUser();
+          if (!user) {
+            renderAuth();
+            return;
+          }
+          await loadData(user);
+        } catch (error) {
+          renderAuthWall(root, {
+            title: 'Sign in to view your dashboard',
+            message: 'We could not verify your session. Please sign in again to continue.'
+          });
+        }
+      }
+
+      init();
+    });
+  </script>
+</body>
+</html>

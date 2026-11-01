@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Tax Savings MVP{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h1>Save Money on Taxes with an S-Corporation</h1>
+    <p>Estimate your potential annual tax savings and manage your business finances.</p>
+
+    <div class="buttons">
+        <button onclick="window.location.href='/auth/login.html'" class="btn btn-primary">
+            Get Started
+        </button>
+        <button onclick="window.location.href='/onboarding.html'" class="btn btn-secondary">
+            Try Demo
+        </button>
+    </div>
+</div>
+
+<div class="features">
+    <div class="feature">
+        <h3>📊 S-Corp Savings Calculator</h3>
+        <p>Get an instant estimate of your potential tax savings by converting to an S-Corporation.</p>
+    </div>
+    <div class="feature">
+        <h3>📈 Track Transactions</h3>
+        <p>Upload bank transactions, categorize expenses, and see your monthly income and expense summary.</p>
+    </div>
+    <div class="feature">
+        <h3>🔒 Secure & Private</h3>
+        <p>Your financial data is encrypted at rest. We never store full bank account numbers.</p>
+    </div>
+</div>
+
+<div class="faq">
+    <h2>Frequently Asked Questions</h2>
+
+    <div class="faq-item">
+        <h4>How much can I save with an S-Corporation?</h4>
+        <p>
+            The savings depend on your net profit, but typically range from $2,000-$20,000+ per year
+            for profitable businesses. Use our calculator to get a personalized estimate.
+        </p>
+    </div>
+
+    <div class="faq-item">
+        <h4>Is this tax advice?</h4>
+        <p>
+            <strong>No.</strong> This tool provides estimates only. Always consult with a qualified
+            tax professional before making any business decisions.
+        </p>
+    </div>
+
+    <div class="faq-item">
+        <h4>What's an "S-Corporation"?</h4>
+        <p>
+            An S-Corp is a tax classification (not a business structure) that allows you to avoid
+            15.3% self-employment tax on dividends. You still need to pay reasonable W-2 wages,
+            but the remainder can be taxed as dividends.
+        </p>
+    </div>
+</div>
+{% endblock %}

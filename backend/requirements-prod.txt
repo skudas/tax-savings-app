@@ -1,0 +1,39 @@
+# Production dependencies (Vercel + Supabase)
+# Install: pip install -r requirements-prod.txt
+
+# Core web framework
+fastapi==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6
+
+# Database & ORM
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9  # PostgreSQL driver for Supabase
+alembic==1.13.0  # Database migrations
+
+# Authentication & Security
+python-jose==3.3.0
+passlib==1.7.4
+argon2-cffi==23.1.0
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Payments
+stripe==7.4.0
+
+# Data handling
+cryptography==41.0.7
+
+# Async support
+httpx==0.25.2
+
+# Production server
+gunicorn==21.2.0
+
+# Monitoring (optional)
+# sentry-sdk==1.39.1
+# newrelic==9.0.0
+
+# API documentation
+# (FastAPI includes Swagger UI by default)

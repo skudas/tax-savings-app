@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Log in to TaxSavings Marketplace to manage consultations, messages, and your tax professionals.">
+  <title>Log In | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <main class="container">
+    <div class="auth-wall">
+      <div class="auth-wall-card" style="text-align:left;max-width:480px">
+        <div class="icon-box">
+          <svg class="icon icon-lg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        </div>
+        <h1>Welcome back</h1>
+        <p>Sign in to manage your consultations, messages, and bookings.</p>
+
+        <form id="loginForm" style="display:grid;gap:1rem;text-align:left">
+          <div class="field">
+            <label class="label" for="email">Email address</label>
+            <input class="input" type="email" id="email" name="email" autocomplete="email" placeholder="you@company.com" required>
+          </div>
+          <div class="field">
+            <label class="label" for="password">Password</label>
+            <input class="input" type="password" id="password" name="password" autocomplete="current-password" placeholder="Enter your password" required>
+          </div>
+          <div class="alert alert-error" id="authError" style="display:none" role="alert"></div>
+          <button class="btn btn-primary btn-lg btn-block" type="submit" id="authSubmit">Log in</button>
+        </form>
+
+        <p style="font-size:0.86rem;color:var(--muted);text-align:center;margin:1.4rem 0 0">
+          New to TaxSavings? <a id="signupLink" href="/auth/signup.html">Create an account</a>
+        </p>
+      </div>
+    </div>
+  </main>
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('');
+      renderFooter();
+
+      const params = new URLSearchParams(window.location.search);
+      const redirect = params.get('redirect') || '';
+      const signupLink = document.getElementById('signupLink');
+      if (redirect) signupLink.href = `/auth/signup.html?redirect=${encodeURIComponent(redirect)}`;
+
+      function safeRedirect(value) {
+        if (!value) return '/marketplace/browse.html';
+        try {
+          const url = new URL(value, window.location.origin);
+          if (url.origin !== window.location.origin) return '/marketplace/browse.html';
+          return `${url.pathname}${url.search}${url.hash}`;
+        } catch (error) {
+          return '/marketplace/browse.html';
+        }
+      }
+
+      getCurrentUser()
+        .then((user) => {
+          if (user) window.location.href = safeRedirect(redirect);
+        })
+        .catch(() => {});
+
+      const form = document.getElementById('loginForm');
+      const errorBox = document.getElementById('authError');
+      const submit = document.getElementById('authSubmit');
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        errorBox.style.display = 'none';
+        setButtonLoading(submit, true);
+
+        try {
+          const session = await api('/auth/login', {
+            method: 'POST',
+            body: {
+              email: document.getElementById('email').value.trim(),
+              password: document.getElementById('password').value
+            }
+          });
+          const token = session && (session.session_token || session.sessionToken);
+          if (token) {
+            try {
+              localStorage.setItem('sessionToken', token);
+            } catch (error) {
+              console.warn('Could not persist session token', error);
+            }
+          }
+          showToast('Welcome back!', 'success');
+          window.location.href = safeRedirect(redirect);
+        } catch (error) {
+          errorBox.innerHTML = `${icon('alert')}<div>${escapeHtml(error.message || 'We could not sign you in. Check your email and password.')}</div>`;
+          errorBox.style.display = 'flex';
+          setButtonLoading(submit, false);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

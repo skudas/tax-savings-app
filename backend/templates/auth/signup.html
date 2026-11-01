@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Create a TaxSavings Marketplace account to book vetted tax professionals and manage your consultations.">
+  <title>Create Account | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <main class="container">
+    <div class="auth-wall">
+      <div class="auth-wall-card" style="text-align:left;max-width:500px">
+        <div class="icon-box">
+          <svg class="icon icon-lg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        </div>
+        <h1>Create your account</h1>
+        <p>Book vetted tax professionals, message them securely, and keep every consultation organized.</p>
+
+        <form id="signupForm" style="display:grid;gap:1rem;text-align:left">
+          <div class="form-grid">
+            <div class="field">
+              <label class="label" for="first_name">First name</label>
+              <input class="input" type="text" id="first_name" name="first_name" autocomplete="given-name" placeholder="Jane" required>
+            </div>
+            <div class="field">
+              <label class="label" for="last_name">Last name</label>
+              <input class="input" type="text" id="last_name" name="last_name" autocomplete="family-name" placeholder="Doe" required>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" for="email">Email address</label>
+            <input class="input" type="email" id="email" name="email" autocomplete="email" placeholder="you@company.com" required>
+          </div>
+          <div class="field">
+            <label class="label" for="password">Password</label>
+            <input class="input" type="password" id="password" name="password" autocomplete="new-password" placeholder="At least 8 characters" minlength="8" required>
+            <span class="hint">Use at least 8 characters. Your password is hashed and never shared.</span>
+          </div>
+          <div class="alert alert-error" id="authError" style="display:none" role="alert"></div>
+          <button class="btn btn-primary btn-lg btn-block" type="submit" id="authSubmit">Create account</button>
+        </form>
+
+        <p style="font-size:0.86rem;color:var(--muted);text-align:center;margin:1.4rem 0 0">
+          Already have an account? <a id="loginLink" href="/auth/login.html">Log in</a>
+        </p>
+      </div>
+    </div>
+  </main>
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('');
+      renderFooter();
+
+      const params = new URLSearchParams(window.location.search);
+      const redirect = params.get('redirect') || '';
+      const loginLink = document.getElementById('loginLink');
+      if (redirect) loginLink.href = `/auth/login.html?redirect=${encodeURIComponent(redirect)}`;
+
+      function safeRedirect(value) {
+        if (!value) return '/marketplace/browse.html';
+        try {
+          const url = new URL(value, window.location.origin);
+          if (url.origin !== window.location.origin) return '/marketplace/browse.html';
+          return `${url.pathname}${url.search}${url.hash}`;
+        } catch (error) {
+          return '/marketplace/browse.html';
+        }
+      }
+
+      getCurrentUser()
+        .then((user) => {
+          if (user) window.location.href = safeRedirect(redirect);
+        })
+        .catch(() => {});
+
+      const form = document.getElementById('signupForm');
+      const errorBox = document.getElementById('authError');
+      const submit = document.getElementById('authSubmit');
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        errorBox.style.display = 'none';
+        setButtonLoading(submit, true);
+
+        const payload = {
+          first_name: document.getElementById('first_name').value.trim(),
+          last_name: document.getElementById('last_name').value.trim(),
+          email: document.getElementById('email').value.trim(),
+          password: document.getElementById('password').value
+        };
+
+        try {
+          await api('/auth/signup', { method: 'POST', body: payload });
+          await api('/auth/login', {
+            method: 'POST',
+            body: { email: payload.email, password: payload.password }
+          });
+          showToast('Your account is ready. Welcome to TaxSavings!', 'success');
+          window.location.href = safeRedirect(redirect);
+        } catch (error) {
+          errorBox.innerHTML = `${icon('alert')}<div>${escapeHtml(error.message || 'We could not create your account. Please try again.')}</div>`;
+          errorBox.style.display = 'flex';
+          setButtonLoading(submit, false);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

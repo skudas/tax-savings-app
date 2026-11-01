@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Book a secure tax consultation with transparent pricing and instant confirmation.">
+  <title>Book a Consultation | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <main class="booking-page">
+    <div class="container" id="bookingRoot">
+      <div class="loading-block"><div class="spinner"></div><span>Preparing secure checkout...</span></div>
+    </div>
+  </main>
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('browse');
+      renderFooter();
+
+      const root = document.getElementById('bookingRoot');
+      const state = {
+        profile: null,
+        rate: null,
+        duration: 60,
+        selectedDate: null,
+        selectedSlot: null,
+        user: null,
+        submitting: false
+      };
+
+      const profileId = queryParam('profile_id');
+      const requestedServiceId = queryParam('service_id');
+      const fallbackProfessionalId = queryParam('professional_id');
+
+      function messageLink(prof) {
+        return `/messages.html?user_id=${encodeURIComponent(prof.user_id)}&name=${encodeURIComponent(prof.user_name)}`;
+      }
+
+      function computeBasePrice() {
+        if (!state.rate) return 0;
+        if (state.rate.service_type === 'hourly') {
+          return (Number(state.rate.price || 0) * state.duration) / 60;
+        }
+        return Number(state.rate.price || 0);
+      }
+
+      function computeDuration() {
+        if (!state.rate) return 60;
+        if (state.rate.service_type === 'hourly') return state.duration;
+        return Number(state.rate.duration_minutes || 60);
+      }
+
+      function renderPage() {
+        const prof = state.profile;
+        const rateCards = prof.rate_cards || [];
+        const certifications = (prof.certifications || []).filter(Boolean);
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'your local time';
+
+        if (!rateCards.length) {
+          root.innerHTML = `
+            <div class="empty-state" style="margin:3rem 0">
+              <div class="icon-box amber">${icon('calendar', 'icon-lg')}</div>
+              <h3>No services available yet</h3>
+              <p>${escapeHtml(prof.user_name)} has not published consultation services. You can message them to request a custom appointment.</p>
+              <div class="row mt-4">
+                <a class="btn btn-outline" href="/marketplace/profile.html?id=${prof.id}">View profile</a>
+                <a class="btn btn-primary" href="${messageLink(prof)}">Message professional</a>
+              </div>
+            </div>`;
+          return;
+        }
+
+        const preselected = rateCards.find((rate) => String(rate.id) === String(requestedServiceId)) || rateCards[0];
+        state.rate = preselected;
+        state.duration = Number(preselected.duration_minutes || 60);
+
+        root.innerHTML = `
+          <div class="booking-head">
+            <div>
+              <span class="eyebrow">${icon('lock', 'icon-sm')} Secure booking</span>
+              <h1>Book your consultation</h1>
+              <p>Choose a service, select a time, and confirm your appointment. You can message the professional before you book.</p>
+            </div>
+            <div class="booking-prof">
+              ${avatar(prof.user_name, 'avatar-sm')}
+              <div>
+                <strong>${escapeHtml(prof.user_name)}</strong>
+                <span>${escapeHtml(certifications.join(' · ') || 'Tax professional')}</span>
+              </div>
+              ${prof.verified ? `<span class="badge badge-verified">${icon('check', 'icon-sm')} Verified</span>` : ''}
+            </div>
+          </div>
+
+          <div class="stepper" id="stepper">
+            <div class="step active" id="step1"><span class="step-num">1</span>Service</div>
+            <span class="step-line"></span>
+            <div class="step" id="step2"><span class="step-num">2</span>Date &amp; time</div>
+            <span class="step-line"></span>
+            <div class="step" id="step3"><span class="step-num">3</span>Payment</div>
+          </div>
+
+          <div class="booking-layout">
+            <div class="booking-main">
+              <section class="card">
+                <div class="card-head">
+                  <h2>1. Choose a service</h2>
+                  <span class="badge badge-gray">${rateCards.length} option${rateCards.length === 1 ? '' : 's'}</span>
+                </div>
+                <div class="card-body">
+                  <div id="serviceList">
+                    ${rateCards.map((rate) => `
+                      <label class="service-option ${rate.id === state.rate.id ? 'selected' : ''}" data-rate-id="${rate.id}">
+                        <input type="radio" name="service" value="${rate.id}" ${rate.id === state.rate.id ? 'checked' : ''}>
+                        <span class="radio-dot"></span>
+                        <div class="service-option-main">
+                          <h3>${escapeHtml(rate.service_name)} <span class="badge badge-gray">${serviceTypeLabel(rate.service_type)}</span></h3>
+                          <p>${escapeHtml(rate.description || 'A focused session tailored to your business and tax situation.')}</p>
+                          <div class="tag-row mt-2">
+                            ${rate.duration_minutes ? `<span class="tag">${icon('clock', 'icon-sm')} ${durationLabel(rate.duration_minutes)}</span>` : '<span class="tag">Flexible duration</span>'}
+                          </div>
+                        </div>
+                        <div class="service-option-price">
+                          <strong>${money(rate.price)}</strong>
+                          <span>${rate.service_type === 'hourly' ? 'per hour' : 'per session'}</span>
+                        </div>
+                      </label>`).join('')}
+                  </div>
+                  <div id="durationWrap" class="mt-4" style="display:none">
+                    <span class="label">Session length</span>
+                    <div class="duration-row" id="durationRow"></div>
+                  </div>
+                  <div class="field mt-4">
+                    <label class="label" for="bookingNotes">Notes for the professional <span class="faint">(optional)</span></label>
+                    <textarea class="textarea" id="bookingNotes" placeholder="Share your business structure, tax questions, or anything that will help prepare for the call." maxlength="1000"></textarea>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <h2>2. Pick a date &amp; time</h2>
+                  <span class="badge badge-gray">${icon('clock', 'icon-sm')} ${escapeHtml(timezone)}</span>
+                </div>
+                <div class="card-body">
+                  <span class="label">Available dates</span>
+                  <div class="date-strip mt-2" id="dateStrip"></div>
+                  <div class="mt-4">
+                    <div class="row-between">
+                      <h3 style="font-size:.95rem">Available times</h3>
+                      <span class="small muted" id="slotHint">Select a date</span>
+                    </div>
+                    <div class="slot-grid" id="slotGrid"></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <h2>3. Payment details</h2>
+                  <span class="badge badge-gray">${icon('credit', 'icon-sm')} Test mode</span>
+                </div>
+                <div class="card-body">
+                  <div id="authNotice"></div>
+                  <form id="paymentForm" novalidate>
+                    <div class="payment-card">
+                      <div class="payment-head">${icon('lock', 'icon-sm')} Card information <span class="badge badge-gray" style="margin-left:auto">Demo checkout</span></div>
+                      <div class="card-body">
+                        <div class="form-grid">
+                          <div class="field span-2">
+                            <label class="label" for="cardName">Name on card</label>
+                            <input class="input" id="cardName" autocomplete="cc-name" placeholder="Alex Morgan" required>
+                          </div>
+                          <div class="field span-2">
+                            <label class="label" for="cardNumber">Card number</label>
+                            <div class="card-number-wrap">
+                              <input class="input" id="cardNumber" inputmode="numeric" autocomplete="cc-number" placeholder="4242 4242 4242 4242" maxlength="19" required>
+                              <span class="card-brand" id="cardBrand">Card</span>
+                            </div>
+                          </div>
+                          <div class="field">
+                            <label class="label" for="cardExpiry">Expiry</label>
+                            <input class="input" id="cardExpiry" inputmode="numeric" autocomplete="cc-exp" placeholder="MM/YY" maxlength="5" required>
+                          </div>
+                          <div class="field">
+                            <label class="label" for="cardCvc">CVC</label>
+                            <input class="input" id="cardCvc" inputmode="numeric" autocomplete="cc-csc" placeholder="123" maxlength="4" required>
+                          </div>
+                          <div class="field">
+                            <label class="label" for="billingZip">Billing ZIP</label>
+                            <input class="input" id="billingZip" inputmode="numeric" autocomplete="postal-code" placeholder="10001" maxlength="10" required>
+                          </div>
+                          <div class="field">
+                            <label class="label" for="billingCountry">Country</label>
+                            <select class="select" id="billingCountry">
+                              <option>United States</option>
+                              <option>Canada</option>
+                              <option>United Kingdom</option>
+                              <option>Australia</option>
+                            </select>
+                          </div>
+                        </div>
+                        <p class="hint mt-3">Payments are in test mode for this demo. No real card is charged. Your booking will be created as pending and the payment step will be recorded securely.</p>
+                      </div>
+                    </div>
+                    <div class="payment-trust">
+                      <span>${icon('lock', 'icon-sm')} Encrypted checkout</span>
+                      <span>${icon('shield', 'icon-sm')} Credential-checked experts</span>
+                      <span>${icon('checkCircle', 'icon-sm')} Transparent pricing</span>
+                    </div>
+                    <button class="btn btn-primary btn-lg btn-block mt-4" id="payButton" type="submit">Confirm &amp; pay</button>
+                  </form>
+                </div>
+              </section>
+            </div>
+
+            <aside class="booking-summary-col">
+              <div class="summary-card">
+                <div class="summary-card-head">
+                  <h2>Order summary</h2>
+                  <p class="small muted mt-1">No hidden fees. The platform fee is included in the listed price.</p>
+                </div>
+                <div class="card-body">
+                  <div class="summary-line"><span>Professional</span><strong>${escapeHtml(prof.user_name)}</strong></div>
+                  <div class="summary-line"><span>Service</span><strong id="sumService">—</strong></div>
+                  <div class="summary-line"><span>Duration</span><strong id="sumDuration">—</strong></div>
+                  <div class="summary-line"><span>Date &amp; time</span><strong id="sumDateTime">Select a time</strong></div>
+                  <hr class="divider">
+                  <div class="summary-line"><span>Service price</span><strong id="sumBase">$0</strong></div>
+                  <div class="summary-line"><span>Platform fee (20%)</span><strong id="sumFee">$0</strong></div>
+                  <div class="summary-line"><span>Professional receives</span><strong id="sumPro">$0</strong></div>
+                  <div class="summary-line total"><span>Total due today</span><strong id="sumTotal">$0</strong></div>
+                  <div class="summary-note" id="sumNote">The 20% platform fee is included in the total price. Your professional receives the remainder.</div>
+                </div>
+              </div>
+              <div class="alert alert-info mt-4">
+                ${icon('info')}
+                <div class="small">You will be able to message ${escapeHtml((prof.user_name || '').split(' ')[0])} after booking. Meeting details appear in your dashboard once confirmed.</div>
+              </div>
+            </aside>
+          </div>`;
+
+        bindBookingEvents();
+        renderDurationOptions();
+        renderDateStrip();
+        selectDate(new Date(), true);
+        updateSummary();
+        refreshAuthNotice();
+      }
+
+      function bindBookingEvents() {
+        root.querySelectorAll('.service-option').forEach((option) => {
+          option.addEventListener('click', () => {
+            const id = option.dataset.rateId;
+            const rate = (state.profile.rate_cards || []).find((item) => String(item.id) === String(id));
+            if (!rate) return;
+            state.rate = rate;
+            state.duration = Number(rate.duration_minutes || 60);
+            root.querySelectorAll('.service-option').forEach((item) => item.classList.toggle('selected', item === option));
+            const radio = option.querySelector('input');
+            if (radio) radio.checked = true;
+            renderDurationOptions();
+            updateSummary();
+          });
+        });
+
+        document.getElementById('paymentForm').addEventListener('submit', handleSubmit);
+
+        const cardNumber = document.getElementById('cardNumber');
+        cardNumber.addEventListener('input', () => {
+          const digits = cardNumber.value.replace(/\D/g, '').slice(0, 16);
+          cardNumber.value = digits.replace(/(.{4})/g, '$1 ').trim();
+          updateCardBrand(digits);
+        });
+
+        const expiry = document.getElementById('cardExpiry');
+        expiry.addEventListener('input', () => {
+          const digits = expiry.value.replace(/\D/g, '').slice(0, 4);
+          expiry.value = digits.length > 2 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits;
+        });
+
+        const cvc = document.getElementById('cardCvc');
+        cvc.addEventListener('input', () => {
+          cvc.value = cvc.value.replace(/\D/g, '').slice(0, 4);
+        });
+
+        const zip = document.getElementById('billingZip');
+        zip.addEventListener('input', () => {
+          zip.value = zip.value.replace(/[^0-9A-Za-z -]/g, '').slice(0, 10);
+        });
+      }
+
+      function updateCardBrand(digits) {
+        const brand = document.getElementById('cardBrand');
+        if (!brand) return;
+        if (/^4/.test(digits)) brand.textContent = 'Visa';
+        else if (/^5[1-5]/.test(digits)) brand.textContent = 'Mastercard';
+        else if (/^3[47]/.test(digits)) brand.textContent = 'Amex';
+        else if (/^6/.test(digits)) brand.textContent = 'Discover';
+        else brand.textContent = 'Card';
+      }
+
+      function renderDurationOptions() {
+        const wrap = document.getElementById('durationWrap');
+        const row = document.getElementById('durationRow');
+        if (!wrap || !row) return;
+
+        if (!state.rate || state.rate.service_type !== 'hourly') {
+          wrap.style.display = 'none';
+          return;
+        }
+
+        wrap.style.display = 'block';
+        const durations = [30, 60, 90, 120];
+        if (!durations.includes(state.duration)) state.duration = 60;
+        row.innerHTML = durations.map((minutes) => `
+          <button class="duration-chip ${state.duration === minutes ? 'selected' : ''}" type="button" data-duration="${minutes}">
+            ${durationLabel(minutes)}
+          </button>`).join('');
+        row.querySelectorAll('[data-duration]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.duration = Number(button.dataset.duration);
+            renderDurationOptions();
+            updateSummary();
+          });
+        });
+      }
+
+      function renderDateStrip() {
+        const strip = document.getElementById('dateStrip');
+        const days = [];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        for (let i = 0; i < 14; i += 1) {
+          const date = new Date(today);
+          date.setDate(today.getDate() + i);
+          days.push(date);
+        }
+        state.selectedDate = today;
+        strip.innerHTML = days.map((date) => `
+          <button class="date-chip ${dateKey(date) === dateKey(today) ? 'selected' : ''}" type="button" data-date="${dateKey(date)}">
+            <span class="day">${date.toLocaleDateString('en-US', { weekday: 'short' })}</span>
+            <span class="num">${date.getDate()}</span>
+            <span class="month">${date.toLocaleDateString('en-US', { month: 'short' })}</span>
+          </button>`).join('');
+
+        strip.querySelectorAll('[data-date]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const date = days.find((item) => dateKey(item) === button.dataset.date);
+            if (date) selectDate(date, false);
+          });
+        });
+      }
+
+      function selectDate(date, initial) {
+        state.selectedDate = date;
+        state.selectedSlot = null;
+        document.querySelectorAll('[data-date]').forEach((button) => {
+          button.classList.toggle('selected', button.dataset.date === dateKey(date));
+        });
+        updateSummary();
+        loadSlots(initial);
+      }
+
+      async function loadSlots(autoAdvance = false) {
+        const grid = document.getElementById('slotGrid');
+        const hint = document.getElementById('slotHint');
+        if (!grid || !state.profile || !state.selectedDate) return;
+
+        grid.innerHTML = `<div class="loading-block" style="grid-column:1/-1;padding:1.5rem 0"><div class="spinner"></div><span>Checking availability...</span></div>`;
+        hint.textContent = formatDate(state.selectedDate, { year: 'numeric' });
+
+        const midnight = new Date(state.selectedDate);
+        midnight.setHours(0, 0, 0, 0);
+        const iso = midnight.toISOString().slice(0, 19);
+
+        try {
+          const slots = await api(`/consultations/professional/${state.profile.user_id}/available?date=${encodeURIComponent(iso)}`);
+          if (!Array.isArray(slots) || !slots.length) {
+            grid.innerHTML = `
+              <div class="empty-state" style="grid-column:1/-1;padding:2rem 1rem">
+                <div class="icon-box amber">${icon('calendar', 'icon-lg')}</div>
+                <h3 style="font-size:1rem">No open times on this date</h3>
+                <p>Try another day from the date strip above.</p>
+              </div>`;
+            hint.textContent = 'No availability';
+            updateStepper();
+            return;
+          }
+
+          grid.innerHTML = slots.map((slot) => `
+            <button class="slot" type="button" data-start="${escapeHtml(typeof slot.start === 'string' ? slot.start : JSON.stringify(slot.start))}">
+              ${formatTime(slot.start)}
+            </button>`).join('');
+
+          grid.querySelectorAll('[data-start]').forEach((button) => {
+            button.addEventListener('click', () => {
+              state.selectedSlot = button.dataset.start;
+              grid.querySelectorAll('.slot').forEach((item) => item.classList.toggle('selected', item === button));
+              updateSummary();
+            });
+          });
+
+          hint.textContent = `${slots.length} time${slots.length === 1 ? '' : 's'} available`;
+          updateStepper();
+        } catch (error) {
+          grid.innerHTML = `
+            <div class="alert alert-error" style="grid-column:1/-1">
+              ${icon('alert')}
+              <div>
+                <strong>Availability could not be loaded.</strong>
+                <div class="small">${escapeHtml(error.message || 'Please try again.')}</div>
+                <button class="btn btn-outline btn-sm mt-2" id="retrySlots" type="button">${icon('refresh', 'icon-sm')} Retry</button>
+              </div>
+            </div>`;
+          const retry = document.getElementById('retrySlots');
+          if (retry) retry.addEventListener('click', () => loadSlots(false));
+          hint.textContent = 'Unavailable';
+          updateStepper();
+        }
+      }
+
+      function updateStepper() {
+        const step1 = document.getElementById('step1');
+        const step2 = document.getElementById('step2');
+        const step3 = document.getElementById('step3');
+        if (!step1 || !step2 || !step3) return;
+
+        step1.classList.remove('active', 'done');
+        step2.classList.remove('active', 'done');
+        step3.classList.remove('active', 'done');
+
+        if (!state.rate) {
+          step1.classList.add('active');
+        } else if (!state.selectedSlot) {
+          step1.classList.add('done');
+          step2.classList.add('active');
+        } else {
+          step1.classList.add('done');
+          step2.classList.add('done');
+          step3.classList.add('active');
+        }
+      }
+
+      function updateSummary() {
+        const base = computeBasePrice();
+        const fee = base * 0.2;
+        const pro = base - fee;
+        const serviceEl = document.getElementById('sumService');
+        if (!serviceEl) return;
+
+        serviceEl.textContent = state.rate ? state.rate.service_name : '—';
+        document.getElementById('sumDuration').textContent = state.rate ? durationLabel(computeDuration()) : '—';
+        document.getElementById('sumDateTime').textContent = state.selectedSlot
+          ? `${formatDate(state.selectedSlot)} at ${formatTime(state.selectedSlot)}`
+          : 'Select a time';
+        document.getElementById('sumBase').textContent = money(base);
+        document.getElementById('sumFee').textContent = money(fee);
+        document.getElementById('sumPro').textContent = money(pro);
+        document.getElementById('sumTotal').textContent = money(base);
+        const button = document.getElementById('payButton');
+        if (button && !state.submitting) {
+          button.innerHTML = state.user
+            ? `Confirm &amp; pay ${money(base)}`
+            : 'Sign in to complete booking';
+        }
+        updateStepper();
+      }
+
+      async function refreshAuthNotice() {
+        try {
+          state.user = await getCurrentUser();
+        } catch (error) {
+          state.user = null;
+        }
+        const notice = document.getElementById('authNotice');
+        if (!notice) return;
+        if (state.user) {
+          notice.innerHTML = `
+            <div class="alert alert-success mb-4">
+              ${icon('checkCircle')}
+              <div><strong>Booking as ${escapeHtml(state.user.first_name || state.user.email)}.</strong><div class="small">Your appointment and receipts will appear in your client dashboard.</div></div>
+            </div>`;
+        } else {
+          notice.innerHTML = `
+            <div class="alert alert-info mb-4">
+              ${icon('info')}
+              <div>
+                <strong>Sign in to finish your booking.</strong>
+                <div class="small">You can choose a service and time now. <a href="/auth/login.html?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}">Log in</a> or <a href="/auth/signup.html?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}">create a free account</a> to pay and reserve your appointment.</div>
+              </div>
+            </div>`;
+        }
+        updateSummary();
+      }
+
+      function validatePayment() {
+        const name = document.getElementById('cardName').value.trim();
+        const number = document.getElementById('cardNumber').value.replace(/\D/g, '');
+        const expiry = document.getElementById('cardExpiry').value.trim();
+        const cvc = document.getElementById('cardCvc').value.trim();
+        const zip = document.getElementById('billingZip').value.trim();
+
+        if (!name) {
+          document.getElementById('cardName').focus();
+          return 'Enter the name on your card.';
+        }
+        if (number.length < 15 || number.length > 16) {
+          document.getElementById('cardNumber').focus();
+          return 'Enter a valid 15 or 16 digit card number.';
+        }
+        const expiryMatch = expiry.match(/^(\d{2})\/(\d{2})$/);
+        if (!expiryMatch) {
+          document.getElementById('cardExpiry').focus();
+          return 'Enter the expiry date as MM/YY.';
+        }
+        const month = Number(expiryMatch[1]);
+        const year = 2000 + Number(expiryMatch[2]);
+        if (month < 1 || month > 12) {
+          document.getElementById('cardExpiry').focus();
+          return 'Enter a valid expiry month.';
+        }
+        const expiryDate = new Date(year, month, 1);
+        if (expiryDate <= new Date()) {
+          document.getElementById('cardExpiry').focus();
+          return 'That card has expired.';
+        }
+        if (cvc.length < 3) {
+          document.getElementById('cardCvc').focus();
+          return 'Enter the 3 or 4 digit security code.';
+        }
+        if (!zip) {
+          document.getElementById('billingZip').focus();
+          return 'Enter your billing ZIP code.';
+        }
+        return null;
+      }
+
+      async function handleSubmit(event) {
+        event.preventDefault();
+        if (state.submitting) return;
+
+        if (!state.user) {
+          window.location.href = `/auth/login.html?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+          return;
+        }
+        if (!state.rate) {
+          showToast('Choose a service to continue.', 'error');
+          return;
+        }
+        if (!state.selectedSlot) {
+          showToast('Pick an available date and time to continue.', 'error');
+          document.getElementById('dateStrip').scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+
+        const validationError = validatePayment();
+        if (validationError) {
+          showToast(validationError, 'error');
+          return;
+        }
+
+        const payButton = document.getElementById('payButton');
+        const notes = document.getElementById('bookingNotes').value.trim();
+        state.submitting = true;
+        setButtonLoading(payButton, true);
+
+        try {
+          const booking = await api('/consultations/', {
+            method: 'POST',
+            body: {
+              professional_id: state.profile.user_id,
+              rate_card_id: state.rate.id,
+              scheduled_at: state.selectedSlot,
+              duration_minutes: computeDuration(),
+              notes: notes || null
+            }
+          });
+
+          let paymentNote = '';
+          try {
+            await api(`/payments/consultation/${booking.id}/pay`, { method: 'POST' });
+            paymentNote = 'Payment authorized successfully. Your appointment is waiting for the professional to confirm.';
+          } catch (paymentError) {
+            if (paymentError.status === 401) {
+              window.location.href = `/auth/login.html?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+              return;
+            }
+            paymentNote = 'Your booking was created successfully. Payment authorization is pending, so the appointment remains pending confirmation. You can complete payment from your dashboard.';
+          }
+
+          renderSuccess(booking, paymentNote);
+          showToast('Your consultation request was created.', 'success');
+        } catch (error) {
+          if (error.status === 401) {
+            window.location.href = `/auth/login.html?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+            return;
+          }
+          showToast(error.message || 'We could not complete your booking. Please try again.', 'error');
+        } finally {
+          state.submitting = false;
+          setButtonLoading(payButton, false);
+          updateSummary();
+        }
+      }
+
+      function renderSuccess(booking, paymentNote) {
+        const prof = state.profile;
+        const service = state.rate;
+        root.innerHTML = `
+          <div class="success-panel">
+            <div class="success-top">
+              <div class="success-check">${icon('check')}</div>
+              <h1>Consultation booked</h1>
+              <p>Your request has been sent to ${escapeHtml(prof.user_name)}. You'll receive a confirmation once they review it.</p>
+            </div>
+            <div class="success-body">
+              <div class="alert alert-success mb-4">
+                ${icon('checkCircle')}
+                <div><strong>Booking reference #${booking.id}</strong><div class="small">${statusBadge(booking.status)} &nbsp; Payment ${paymentNote ? 'step completed' : 'pending'}.</div></div>
+              </div>
+              <div class="success-details">
+                <div><span>Professional</span><strong>${escapeHtml(prof.user_name)}</strong></div>
+                <div><span>Service</span><strong>${escapeHtml(service.service_name)}</strong></div>
+                <div><span>Date</span><strong>${formatDate(booking.scheduled_at)}</strong></div>
+                <div><span>Time</span><strong>${formatTime(booking.scheduled_at)} · ${durationLabel(booking.duration_minutes)}</strong></div>
+                <div><span>Total paid</span><strong>${money(booking.total_price, 2)}</strong></div>
+                <div><span>Professional receives</span><strong>${money(booking.professional_receives, 2)}</strong></div>
+              </div>
+              ${paymentNote ? `<div class="alert ${paymentNote.startsWith('Payment authorized') ? 'alert-success' : 'alert-warning'} mt-4">${icon('info')}<div class="small">${escapeHtml(paymentNote)}</div></div>` : ''}
+              <div class="row mt-5" style="flex-wrap:wrap">
+                <a class="btn btn-primary" href="/dashboard/client.html">${icon('calendar', 'icon-sm')} View my bookings</a>
+                <a class="btn btn-outline" href="${messageLink(prof)}">${icon('message', 'icon-sm')} Message professional</a>
+                <a class="btn btn-ghost" href="/marketplace/browse.html">Browse more experts</a>
+              </div>
+            </div>
+          </div>`;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      async function resolveProfile() {
+        if (profileId) {
+          return api(`/professionals/${encodeURIComponent(profileId)}`);
+        }
+        if (fallbackProfessionalId) {
+          const professionals = await api('/professionals/search?limit=100');
+          const match = (professionals || []).find((prof) => String(prof.user_id) === String(fallbackProfessionalId));
+          if (match) return match;
+        }
+        return null;
+      }
+
+      async function init() {
+        try {
+          const [prof] = await Promise.all([resolveProfile(), getCurrentUser().catch(() => null)]);
+          if (!prof) {
+            root.innerHTML = `
+              <div class="empty-state" style="margin:3rem 0">
+                <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+                <h3>Choose a professional to book</h3>
+                <p>We couldn't find the professional for this booking link. Browse the marketplace to compare experts and select a service.</p>
+                <a class="btn btn-primary" href="/marketplace/browse.html">Browse professionals</a>
+              </div>`;
+            return;
+          }
+          state.profile = prof;
+          renderPage();
+        } catch (error) {
+          root.innerHTML = `
+            <div class="empty-state" style="margin:3rem 0">
+              <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+              <h3>Checkout is temporarily unavailable</h3>
+              <p>${escapeHtml(error.message || 'Please try again in a moment.')}</p>
+              <button class="btn btn-primary" id="retryInit" type="button">Try again</button>
+            </div>`;
+          const retry = document.getElementById('retryInit');
+          if (retry) retry.addEventListener('click', init);
+        }
+      }
+
+      init();
+    });
+  </script>
+</body>
+</html>

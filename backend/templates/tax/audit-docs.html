@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audit Defense Center | TaxPilot</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tax.css">
+</head>
+<body class="tax-app">
+  <div id="taxNavRoot"></div>
+
+  <main class="tax-shell">
+    <div class="container">
+      <div class="d-flex flex-wrap justify-content-between align-items-end gap-3">
+        <div>
+          <div class="page-eyebrow">Audit Defense</div>
+          <h1 class="page-title">Documentation center</h1>
+          <p class="page-subtitle mb-0">Organize receipts by deduction, measure coverage, and build an audit response package.</p>
+        </div>
+        <div class="d-flex gap-2 no-print">
+          <input class="form-control" id="auditYear" type="number" min="2000" max="2100" style="width:120px" aria-label="Tax year">
+          <button class="btn btn-tax-primary" id="generatePackage" type="button"><i class="bi bi-folder2-open me-1"></i> Audit package</button>
+        </div>
+      </div>
+
+      <div class="row g-4 mt-1">
+        <div class="col-lg-4">
+          <div class="card no-print">
+            <div class="card-header"><i class="bi bi-cloud-arrow-up me-2 text-primary"></i>Upload documentation</div>
+            <div class="card-body">
+              <div class="dropzone mb-3" id="dropzone">
+                <i class="bi bi-file-earmark-arrow-up fs-3 text-primary"></i>
+                <div class="fw-semibold mt-2" id="dropzoneLabel">Drop a receipt or click to choose a file</div>
+                <div class="small text-secondary">PDF, JPG, PNG, CSV, XLSX · up to 15 MB</div>
+                <input type="file" id="auditFile" class="d-none" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.csv,.txt,.xls,.xlsx">
+              </div>
+              <div class="row g-2">
+                <div class="col-12">
+                  <label class="form-label small fw-semibold" for="auditCategory">Deduction category</label>
+                  <select class="form-select" id="auditCategory"></select>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small fw-semibold" for="auditNotes">Notes (optional)</label>
+                  <input class="form-control" id="auditNotes" placeholder="e.g. January client dinner receipt">
+                </div>
+                <div class="col-12">
+                  <button class="btn btn-tax-primary w-100" id="uploadBtn" type="button" disabled><i class="bi bi-upload me-1"></i> Upload document</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-4 no-print">
+            <div class="card-header"><i class="bi bi-link-45deg me-2 text-primary"></i>Add a document link</div>
+            <div class="card-body">
+              <form id="linkDocForm" class="row g-2">
+                <div class="col-6">
+                  <label class="form-label small fw-semibold" for="linkCategory">Category</label>
+                  <select class="form-select" id="linkCategory"></select>
+                </div>
+                <div class="col-6">
+                  <label class="form-label small fw-semibold" for="linkName">File name</label>
+                  <input class="form-control" id="linkName" placeholder="receipt.pdf" required>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small fw-semibold" for="linkUrl">URL</label>
+                  <input class="form-control" id="linkUrl" type="url" placeholder="https://drive.google.com/..." required>
+                </div>
+                <div class="col-12">
+                  <button class="btn btn-outline-secondary w-100" type="submit">Add link</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-8">
+          <div id="coverageHost">
+            <div class="card"><div class="card-body"><span class="loading-inline"><span class="spinner-border spinner-border-sm"></span> Loading coverage...</span></div></div>
+          </div>
+
+          <div class="card mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-folder-check me-2 text-primary"></i>Documents on file</span>
+              <span class="pill pill-draft" id="docCount">0</span>
+            </div>
+            <div class="card-body p-0" id="documentList">
+              <div class="empty-state py-4 small">No documents uploaded yet.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="modal fade" id="packageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Audit response package</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body" id="packageBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" id="printPackage" type="button"><i class="bi bi-printer me-1"></i> Print</button>
+          <button class="btn btn-tax-primary" id="downloadPackage" type="button"><i class="bi bi-download me-1"></i> Download JSON</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/js/tax.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      const T = window.Tax;
+      T.mountNav('audit');
+      await T.requireAuth();
+
+      const requested = T.queryParam('year');
+      const yearInput = document.getElementById('auditYear');
+      yearInput.value = requested || T.defaultTaxYear();
+      let selectedFile = null;
+      let packageData = null;
+      let categories = [];
+
+      async function loadCategories() {
+        const rules = await T.api('/deductions/rules').catch(() => []);
+        categories = rules.map((r) => r.category).sort();
+        const options = categories.map((c) => `<option value="${T.escapeHtml(c)}">${T.escapeHtml(c.replace(/_/g, ' '))}</option>`).join('');
+        document.getElementById('auditCategory').innerHTML = options;
+        document.getElementById('linkCategory').innerHTML = options;
+      }
+
+      function renderCoverage(coverage) {
+        const pct = Math.max(0, Math.min(100, Number(coverage.coverage_percent || 0)));
+        const riskClass = coverage.risk_level === 'low' ? 'text-success' : coverage.risk_level === 'medium' ? 'text-warning' : 'text-danger';
+        document.getElementById('coverageHost').innerHTML = `
+          <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-shield-check me-2 text-primary"></i>Coverage by deduction</span>
+              <span class="pill ${coverage.risk_level === 'low' ? 'pill-filed' : coverage.risk_level === 'medium' ? 'pill-ready' : 'pill-danger'}">${T.escapeHtml(coverage.risk_level)} risk</span>
+            </div>
+            <div class="card-body">
+              <div class="d-flex flex-wrap align-items-center gap-4">
+                <div class="coverage-ring" style="--pct:${pct}"><span>${pct.toFixed(0)}%</span></div>
+                <div>
+                  <div class="h5 mb-1">${T.money(coverage.documented_amount)} documented</div>
+                  <div class="small text-secondary">of ${T.money(coverage.total_deductions)} in claimed deductions</div>
+                  <div class="small ${riskClass} fw-semibold mt-1">${T.escapeHtml(coverage.recommendation)}</div>
+                  <div class="small text-secondary mt-1">${coverage.document_count} document${coverage.document_count === 1 ? '' : 's'} on file</div>
+                </div>
+              </div>
+              <div class="table-responsive mt-4">
+                <table class="table table-tax mb-0">
+                  <thead><tr><th>Deduction</th><th class="text-end">Amount</th><th class="text-end">Documents</th><th>Status</th></tr></thead>
+                  <tbody>
+                    ${(coverage.rows || []).length ? coverage.rows.map((row) => `<tr>
+                      <td class="text-capitalize">${T.escapeHtml(String(row.category).replace(/_/g, ' '))}</td>
+                      <td class="text-end">${T.money(row.amount)}</td>
+                      <td class="text-end">${row.documents_on_file}</td>
+                      <td>${row.status === 'complete' ? '<span class="pill pill-filed">Documented</span>' : row.status === 'partial' ? '<span class="pill pill-ready">Partial</span>' : '<span class="pill pill-danger">Missing</span>'}</td>
+                    </tr>`).join('') : '<tr><td colspan="4" class="text-secondary">No deductions claimed for this year.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>`;
+
+        if ((coverage.under_documented || []).length) {
+          document.getElementById('coverageHost').insertAdjacentHTML('beforeend', `
+            <div class="card mt-3 border-warning-subtle">
+              <div class="card-header text-warning-emphasis"><i class="bi bi-exclamation-triangle me-2"></i>Needs action</div>
+              <div class="card-body small">
+                ${coverage.under_documented.map((item) => `<div class="d-flex justify-content-between border-bottom py-1">
+                  <span class="text-capitalize">${T.escapeHtml(String(item.category).replace(/_/g, ' '))}</span>
+                  <span><strong>${T.money(item.amount)}</strong> · ${T.escapeHtml(item.status)}</span>
+                </div>`).join('')}
+              </div>
+            </div>`);
+        }
+      }
+
+      function renderDocuments(data) {
+        document.getElementById('docCount').textContent = data.count;
+        const host = document.getElementById('documentList');
+        if (!data.count) {
+          host.innerHTML = '<div class="empty-state py-4 small">No documents uploaded yet. Add receipts to improve audit coverage.</div>';
+          return;
+        }
+        const groups = Object.entries(data.by_category);
+        host.innerHTML = groups.map(([category, docs]) => `
+          <div class="border-bottom">
+            <div class="px-3 pt-3 pb-1 d-flex justify-content-between">
+              <span class="small fw-semibold text-capitalize">${T.escapeHtml(category.replace(/_/g, ' '))}</span>
+              <span class="small text-secondary">${docs.length} file${docs.length === 1 ? '' : 's'}</span>
+            </div>
+            <div class="px-3 pb-2">
+              ${docs.map((doc) => `<div class="d-flex justify-content-between align-items-center py-1">
+                <a class="small text-decoration-none" href="${T.escapeHtml(doc.file_url)}" target="_blank" rel="noopener noreferrer"><i class="bi bi-paperclip me-1"></i>${T.escapeHtml(doc.filename)}</a>
+                <div class="d-flex align-items-center gap-2">
+                  <span class="small text-secondary">${T.formatDate(doc.uploaded_at)}</span>
+                  <button class="btn btn-sm btn-link text-danger p-0" data-delete-doc="${doc.id}" title="Delete"><i class="bi bi-trash"></i></button>
+                </div>
+              </div>`).join('')}
+            </div>
+          </div>`).join('');
+        host.querySelectorAll('[data-delete-doc]').forEach((button) => {
+          button.onclick = async () => {
+            if (!confirm('Delete this document record?')) return;
+            try {
+              await T.api(`/audit-docs/${button.dataset.deleteDoc}`, { method: 'DELETE' });
+              T.toast('Document deleted', 'success');
+              await refresh();
+            } catch (error) {
+              T.toast(error.message, 'error');
+            }
+          };
+        });
+      }
+
+      async function refresh() {
+        const year = Number(yearInput.value) || T.defaultTaxYear();
+        const [coverage, docs] = await Promise.all([
+          T.api(`/audit-docs/coverage?tax_year=${year}`),
+          T.api(`/audit-docs?tax_year=${year}`),
+        ]);
+        renderCoverage(coverage);
+        renderDocuments(docs);
+      }
+
+      yearInput.addEventListener('change', refresh);
+
+      document.getElementById('dropzone').addEventListener('click', () => document.getElementById('auditFile').click());
+      document.getElementById('dropzone').addEventListener('dragover', (event) => {
+        event.preventDefault();
+        event.currentTarget.classList.add('dragover');
+      });
+      document.getElementById('dropzone').addEventListener('dragleave', (event) => event.currentTarget.classList.remove('dragover'));
+      document.getElementById('dropzone').addEventListener('drop', (event) => {
+        event.preventDefault();
+        event.currentTarget.classList.remove('dragover');
+        if (event.dataTransfer.files.length) setFile(event.dataTransfer.files[0]);
+      });
+      document.getElementById('auditFile').addEventListener('change', (event) => {
+        if (event.target.files.length) setFile(event.target.files[0]);
+      });
+
+      function setFile(file) {
+        selectedFile = file;
+        document.getElementById('dropzoneLabel').textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+        document.getElementById('uploadBtn').disabled = false;
+      }
+
+      document.getElementById('uploadBtn').addEventListener('click', async (event) => {
+        if (!selectedFile) return;
+        const button = event.currentTarget;
+        T.setLoading(button, true, 'Uploading...');
+        try {
+          const form = new FormData();
+          form.append('file', selectedFile);
+          const year = Number(yearInput.value) || T.defaultTaxYear();
+          const category = document.getElementById('auditCategory').value;
+          const notes = document.getElementById('auditNotes').value;
+          const query = `tax_year=${year}&category=${encodeURIComponent(category)}${notes ? '&notes=' + encodeURIComponent(notes) : ''}`;
+          await T.api(`/audit-docs/upload?${query}`, { method: 'POST', body: form });
+          T.toast('Document uploaded', 'success');
+          selectedFile = null;
+          document.getElementById('auditFile').value = '';
+          document.getElementById('dropzoneLabel').textContent = 'Drop a receipt or click to choose a file';
+          document.getElementById('uploadBtn').disabled = true;
+          document.getElementById('auditNotes').value = '';
+          await refresh();
+        } catch (error) {
+          T.toast(error.message, 'error');
+        } finally {
+          T.setLoading(button, false);
+        }
+      });
+
+      document.getElementById('linkDocForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+          await T.api('/audit-docs', {
+            method: 'POST',
+            body: {
+              tax_year: Number(yearInput.value) || T.defaultTaxYear(),
+              category: document.getElementById('linkCategory').value,
+              filename: document.getElementById('linkName').value,
+              file_url: document.getElementById('linkUrl').value,
+            },
+          });
+          event.target.reset();
+          T.toast('Document link added', 'success');
+          await refresh();
+        } catch (error) {
+          T.toast(error.message, 'error');
+        }
+      });
+
+      document.getElementById('generatePackage').addEventListener('click', async () => {
+        try {
+          const year = Number(yearInput.value) || T.defaultTaxYear();
+          packageData = await T.api(`/audit-docs/package?tax_year=${year}`);
+          document.getElementById('packageBody').innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <div><div class="fw-semibold">Tax year ${packageData.tax_year}</div><div class="small text-secondary">Prepared ${T.formatDate(packageData.prepared_at)}</div></div>
+              <span class="pill ${packageData.summary.risk_level === 'low' ? 'pill-filed' : packageData.summary.risk_level === 'medium' ? 'pill-ready' : 'pill-danger'}">${T.escapeHtml(packageData.summary.risk_level)} risk</span>
+            </div>
+            <div class="row g-2 mb-3">
+              <div class="col-4"><div class="stat-card"><div class="label">Deductions</div><div class="value fs-5">${T.money(packageData.summary.total_deductions)}</div></div></div>
+              <div class="col-4"><div class="stat-card green"><div class="label">Documented</div><div class="value fs-5">${T.money(packageData.summary.documented_amount)}</div></div></div>
+              <div class="col-4"><div class="stat-card"><div class="label">Coverage</div><div class="value fs-5">${packageData.summary.coverage_percent}%</div></div></div>
+            </div>
+            <h6 class="fw-bold">Response checklist</h6>
+            <ol class="small text-secondary">${packageData.response_checklist.map((item) => `<li>${T.escapeHtml(item)}</li>`).join('')}</ol>
+            <h6 class="fw-bold mt-3">Documents by category</h6>
+            ${Object.keys(packageData.documents_by_category).length ? Object.entries(packageData.documents_by_category).map(([cat, docs]) => `
+              <div class="mb-2"><div class="small fw-semibold text-capitalize">${T.escapeHtml(cat.replace(/_/g, ' '))}</div>
+              <ul class="small text-secondary mb-1">${docs.map((d) => `<li>${T.escapeHtml(d.filename)}</li>`).join('')}</ul></div>`).join('') : '<div class="small text-secondary">No documents attached.</div>'}
+            <h6 class="fw-bold mt-3">Items needing action</h6>
+            ${packageData.items_needing_action.length ? `<ul class="small text-danger">${packageData.items_needing_action.map((i) => `<li class="text-capitalize">${T.escapeHtml(String(i.category).replace(/_/g, ' '))} · ${T.money(i.amount)} (${T.escapeHtml(i.status)})</li>`).join('')}</ul>` : '<div class="small text-success">All claimed deductions are documented.</div>'}
+            <div class="disclaimer-box mt-3">${T.escapeHtml(packageData.disclaimer)}</div>`;
+          new bootstrap.Modal(document.getElementById('packageModal')).show();
+        } catch (error) {
+          T.toast(error.message, 'error');
+        }
+      });
+
+      document.getElementById('downloadPackage').addEventListener('click', () => {
+        if (!packageData) return;
+        const blob = new Blob([JSON.stringify(packageData, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `audit_package_${packageData.tax_year}.json`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      });
+
+      document.getElementById('printPackage').addEventListener('click', () => {
+        if (!packageData) return;
+        const body = document.getElementById('packageBody').innerHTML;
+        T.printHtml(`Audit Response Package ${packageData.tax_year}`, `<h1>Audit Response Package</h1><div class="sub">Tax year ${packageData.tax_year} · ${T.escapeHtml(packageData.taxpayer.name)}</div>${body}`);
+      });
+
+      try {
+        await loadCategories();
+        await refresh();
+      } catch (error) {
+        T.toast(error.message, 'error');
+      }
+    });
+  </script>
+</body>
+</html>

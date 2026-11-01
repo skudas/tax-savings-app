@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Tax Savings MVP{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="container">
+                <a href="/" class="logo">💰 Tax Savings</a>
+                <ul class="nav-menu">
+                    <li><a href="/">Home</a></li>
+                    <li id="nav-auth">
+                        <a href="/auth/signup.html">Sign Up</a> |
+                        <a href="/auth/login.html">Log In</a>
+                    </li>
+                    <li id="nav-user" style="display: none;">
+                        <span id="user-email"></span> |
+                        <a href="#" onclick="logout()">Log Out</a>
+                    </li>
+                </ul>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>
+                <strong>⚠️ Disclaimer:</strong> This tool provides estimates only and does not constitute tax advice.
+                Always consult with a qualified tax professional before making business decisions.
+            </p>
+            <p>&copy; 2024 Tax Savings MVP. For demonstration purposes only.</p>
+        </div>
+    </footer>
+
+    <script src="{{ url_for('static', path='/js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

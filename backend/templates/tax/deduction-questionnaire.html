@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Deduction Interview | TaxPilot</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tax.css">
+</head>
+<body class="tax-app">
+  <div id="taxNavRoot"></div>
+
+  <main class="tax-shell">
+    <div class="container">
+      <div class="page-eyebrow">Smart Deduction Finder</div>
+      <h1 class="page-title">Find every deduction you qualify for</h1>
+      <p class="page-subtitle">Answer a short guided interview. We match each answer to IRS limits and flag the documentation you will need.</p>
+
+      <div class="row g-4">
+        <div class="col-lg-8">
+          <div class="card no-print">
+            <div class="card-body">
+              <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold" for="qReturn">Tax return</label>
+                  <select class="form-select" id="qReturn"><option value="">No return selected</option></select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold" for="qIncomeType">Income type</label>
+                  <select class="form-select" id="qIncomeType">
+                    <option value="self_employed">Self-employed</option>
+                    <option value="1099">1099 contractor</option>
+                    <option value="w2">W-2 employee</option>
+                    <option value="rental">Rental income</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold" for="qTaxYear">Tax year</label>
+                  <input class="form-control" id="qTaxYear" type="number" min="2000" max="2100">
+                </div>
+                <div class="col-md-2">
+                  <button class="btn btn-tax-primary w-100" id="startInterview" type="button">Start</button>
+                </div>
+              </div>
+              <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold" for="qGross">Gross income (optional)</label>
+                  <input class="form-control" id="qGross" type="number" min="0" step="0.01" placeholder="e.g. 120000">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold" for="qNet">Net self-employment profit (optional)</label>
+                  <input class="form-control" id="qNet" type="number" min="0" step="0.01" placeholder="e.g. 90000">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="interviewHost" class="mt-4">
+            <div class="card">
+              <div class="card-body empty-state">
+                <div class="icon"><i class="bi bi-search"></i></div>
+                <h5>Ready when you are</h5>
+                <p class="mb-0">Choose your return and income type, then start the interview. Each step takes about a minute.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-4">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-piggy-bank me-2 text-success"></i>Estimated savings</div>
+            <div class="card-body">
+              <div class="stat-card green mb-3">
+                <div class="label">Deductions claimed</div>
+                <div class="value" id="claimedTotal">$0</div>
+                <div class="hint" id="claimedCount">0 items</div>
+              </div>
+              <div class="d-flex justify-content-between small py-1">
+                <span class="text-secondary">Estimated tax savings</span>
+                <strong class="text-success" id="savingsEstimate">$0</strong>
+              </div>
+              <div class="d-flex justify-content-between small py-1">
+                <span class="text-secondary">Needs documentation</span>
+                <strong id="missingDocs">0</strong>
+              </div>
+              <hr>
+              <div class="small fw-semibold mb-2">Claimed this year</div>
+              <div id="claimedList" class="small text-secondary">No deductions claimed yet.</div>
+            </div>
+          </div>
+
+          <div class="card mt-4">
+            <div class="card-header"><i class="bi bi-shield-exclamation me-2 text-warning"></i>Audit tip</div>
+            <div class="card-body small text-secondary">
+              Keep receipts, invoices, and bank statements for every deduction. Amounts of $75 or more should have a receipt, and vehicle or home office claims need a contemporaneous log.
+            </div>
+          </div>
+
+          <div class="disclaimer-box mt-4">
+            Deduction limits are simplified. Confirm eligibility and documentation requirements with your tax professional.
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/js/tax.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      const T = window.Tax;
+      T.mountNav('deductions');
+      await T.requireAuth();
+
+      let returns = [];
+      let activeReturn = null;
+      let questionnaire = null;
+      let stepIndex = 0;
+      let answered = {};
+
+      document.getElementById('qTaxYear').value = T.defaultTaxYear();
+
+      async function loadReturns() {
+        returns = await T.getReturns();
+        const select = document.getElementById('qReturn');
+        select.innerHTML = `<option value="">No return selected</option>` + returns.map((r) =>
+          `<option value="${r.id}">${r.tax_year} · ${T.escapeHtml(r.filing_status_label)}</option>`).join('');
+        const requested = T.queryParam('return_id');
+        activeReturn = returns.find((r) => String(r.id) === String(requested)) || returns[0] || null;
+        if (activeReturn) {
+          select.value = activeReturn.id;
+          document.getElementById('qTaxYear').value = activeReturn.tax_year;
+          document.getElementById('qIncomeType').value = activeReturn.self_employment_income ? 'self_employed' : (activeReturn.w2_wages ? 'w2' : 'self_employed');
+          document.getElementById('qGross').value = Number(activeReturn.total_income || activeReturn.self_employment_income || 0) || '';
+        }
+        select.onchange = () => {
+          activeReturn = returns.find((r) => String(r.id) === select.value) || null;
+          if (activeReturn) document.getElementById('qTaxYear').value = activeReturn.tax_year;
+          loadSummary();
+        };
+        await loadSummary();
+      }
+
+      async function loadSummary() {
+        const year = Number(document.getElementById('qTaxYear').value) || T.defaultTaxYear();
+        const suffix = activeReturn ? `?tax_return_id=${activeReturn.id}` : `?tax_year=${year}`;
+        try {
+          const data = await T.api(`/deductions${suffix}`);
+          const total = Number(data.total || 0);
+          document.getElementById('claimedTotal').textContent = T.money(total);
+          document.getElementById('claimedCount').textContent = `${data.count} item${data.count === 1 ? '' : 's'} claimed`;
+          document.getElementById('savingsEstimate').textContent = T.money(total * 0.25);
+          document.getElementById('missingDocs').textContent = data.deductions.filter((d) => d.documentation_status !== 'complete').length;
+          document.getElementById('claimedList').innerHTML = data.deductions.length
+            ? data.deductions.slice(0, 10).map((d) => `
+              <div class="d-flex justify-content-between py-1 border-bottom">
+                <span class="text-capitalize">${T.escapeHtml(d.category.replace(/_/g, ' '))}</span>
+                <span><strong>${T.money(d.amount)}</strong> <span class="text-danger small" title="Documentation status">${d.documentation_status !== 'complete' ? '!' : ''}</span></span>
+              </div>`).join('')
+            : 'No deductions claimed yet.';
+          return data;
+        } catch (error) {
+          T.toast(error.message, 'error');
+        }
+      }
+
+      function stepDots() {
+        return `<div class="step-dots mb-3">${questionnaire.sections.map((s, i) =>
+          `<span class="step-dot ${i < stepIndex ? 'done' : (i === stepIndex ? 'active' : '')}" title="${T.escapeHtml(s.title)}"></span>`).join('')}</div>`;
+      }
+
+      function renderStep() {
+        const host = document.getElementById('interviewHost');
+        if (!questionnaire || !questionnaire.sections.length) {
+          host.innerHTML = `<div class="card"><div class="card-body empty-state">No questionnaire sections available.</div></div>`;
+          return;
+        }
+        if (stepIndex >= questionnaire.sections.length) {
+          host.innerHTML = `
+            <div class="card">
+              <div class="card-body text-center py-5">
+                <div class="display-6 text-success mb-2"><i class="bi bi-check2-circle"></i></div>
+                <h4 class="mb-2">Interview complete</h4>
+                <p class="text-secondary">You reviewed ${questionnaire.sections.length} deduction categories. Add missing items or generate your forms.</p>
+                <div class="d-flex justify-content-center gap-2 mt-3">
+                  <button class="btn btn-tax-soft" id="restartInterview" type="button">Review again</button>
+                  <a class="btn btn-tax-primary" href="${T.withReturn('/tax/forms-viewer.html')}">Generate forms</a>
+                </div>
+              </div>
+            </div>`;
+          document.getElementById('restartInterview').onclick = () => { stepIndex = 0; renderStep(); };
+          return;
+        }
+
+        const section = questionnaire.sections[stepIndex];
+        const suggested = Number(section.suggested_deduction || 0);
+        const limitText = section.max_amount
+          ? `IRS cap ${T.money(section.max_amount)}`
+          : (section.percentage_limit ? `${Math.round(section.percentage_limit * 100)}% limit` : 'No fixed cap');
+        host.innerHTML = `
+          <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-patch-question me-2 text-primary"></i>Step ${stepIndex + 1} of ${questionnaire.sections.length}</span>
+              <span class="irs-badge">${T.escapeHtml(section.irs_code || 'IRS')}</span>
+            </div>
+            <div class="card-body">
+              ${stepDots()}
+              <h4 class="h5 fw-bold mb-1">${T.escapeHtml(section.title)}</h4>
+              <p class="text-secondary small mb-3">${T.escapeHtml(section.description)}</p>
+              <div class="d-flex flex-wrap gap-2 mb-3">
+                <span class="pill pill-info">${T.escapeHtml(limitText)}</span>
+                <span class="pill pill-draft">Est. savings ${T.money(section.estimated_max_savings)}</span>
+                <span class="pill pill-draft">${T.escapeHtml(section.limit_basis || 'absolute')} basis</span>
+              </div>
+
+              <div class="row g-3 mb-3">
+                ${(section.questions || []).map((q) => `
+                  <div class="col-md-6">
+                    <div class="question-block h-100 mb-0">
+                      <label class="form-label mb-1">${T.escapeHtml(q.question)}</label>
+                      <input class="form-control form-control-sm" data-question="${T.escapeHtml(q.field)}" placeholder="Your answer">
+                      ${q.help ? `<div class="question-help">${T.escapeHtml(q.help)}</div>` : ''}
+                    </div>
+                  </div>`).join('')}
+              </div>
+
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold" for="deductionAmount">Deduction amount (USD)</label>
+                  <input class="form-control" id="deductionAmount" type="number" min="0" step="0.01" value="${suggested || ''}" placeholder="0.00">
+                  <div class="form-text">Suggested from your income: ${T.money(suggested)}</div>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold" for="deductionDescription">Business purpose / description</label>
+                  <input class="form-control" id="deductionDescription" placeholder="What was this expense for?">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold" for="deductionReceipt">Receipt URL (optional)</label>
+                  <input class="form-control" id="deductionReceipt" placeholder="https://...">
+                </div>
+              </div>
+
+              <div id="validationHost" class="mt-3"></div>
+
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-4">
+                <div>
+                  <button class="btn btn-outline-secondary" id="backStep" type="button" ${stepIndex === 0 ? 'disabled' : ''}>Back</button>
+                  <button class="btn btn-link text-secondary" id="skipStep" type="button">Not applicable</button>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-tax-soft" id="saveOnly" type="button">Save deduction</button>
+                  <button class="btn btn-tax-primary" id="saveNext" type="button">Save &amp; continue <i class="bi bi-arrow-right ms-1"></i></button>
+                </div>
+              </div>
+
+              <div class="mt-4">
+                <div class="small fw-semibold mb-1">Documentation to keep</div>
+                <div class="small text-secondary">${(section.documentation_required || []).map((d) => `<span class="badge text-bg-light border me-1 mb-1">${T.escapeHtml(d)}</span>`).join('') || 'No specific documents listed.'}</div>
+              </div>
+            </div>
+          </div>`;
+        wireStep(section);
+      }
+
+      function collectAnswers() {
+        const answers = {};
+        document.querySelectorAll('[data-question]').forEach((input) => {
+          if (input.value.trim()) answers[input.dataset.question] = input.value.trim();
+        });
+        return answers;
+      }
+
+      function payloadFor(section) {
+        const amount = Number(document.getElementById('deductionAmount').value || 0);
+        if (!amount || amount <= 0) {
+          T.toast('Enter a deduction amount greater than zero.', 'error');
+          return null;
+        }
+        const description = document.getElementById('deductionDescription').value.trim();
+        const answers = collectAnswers();
+        const answerText = Object.keys(answers).length ? `Details: ${JSON.stringify(answers)}` : '';
+        return {
+          tax_return_id: activeReturn ? activeReturn.id : null,
+          tax_year: Number(document.getElementById('qTaxYear').value) || T.defaultTaxYear(),
+          category: section.category,
+          amount,
+          description: [description, answerText].filter(Boolean).join(' | ') || section.title,
+          receipt_url: document.getElementById('deductionReceipt').value.trim() || null,
+          source: 'questionnaire',
+        };
+      }
+
+      async function save(section, advance) {
+        const payload = payloadFor(section);
+        if (!payload) return;
+        const buttons = [document.getElementById('saveOnly'), document.getElementById('saveNext')];
+        buttons.forEach((b) => T.setLoading(b, true, 'Saving...'));
+        try {
+          const result = await T.api('/deductions', { method: 'POST', body: payload });
+          answered[section.category] = payload.amount;
+          const warnings = (result.validation && result.validation.warnings) || [];
+          if (warnings.length) {
+            document.getElementById('validationHost').innerHTML = `<div class="alert alert-warning py-2 small mb-0"><strong>IRS limit check:</strong> ${warnings.map(T.escapeHtml).join(' ')}</div>`;
+            T.toast(warnings[0], 'info');
+          } else {
+            T.toast(`${section.title} deduction saved`, 'success');
+          }
+          await loadSummary();
+          if (advance) {
+            stepIndex += 1;
+            setTimeout(renderStep, warnings.length ? 900 : 250);
+          }
+        } catch (error) {
+          T.toast(error.message, 'error');
+        } finally {
+          buttons.forEach((b) => T.setLoading(b, false));
+        }
+      }
+
+      function wireStep(section) {
+        document.getElementById('backStep').onclick = () => { if (stepIndex > 0) { stepIndex -= 1; renderStep(); } };
+        document.getElementById('skipStep').onclick = () => { stepIndex += 1; renderStep(); };
+        document.getElementById('saveOnly').onclick = () => save(section, false);
+        document.getElementById('saveNext').onclick = () => save(section, true);
+      }
+
+      document.getElementById('startInterview').onclick = async (event) => {
+        const button = event.currentTarget;
+        T.setLoading(button, true, 'Loading...');
+        try {
+          questionnaire = await T.api('/deductions/questionnaire', {
+            method: 'POST',
+            body: {
+              income_type: document.getElementById('qIncomeType').value,
+              tax_year: Number(document.getElementById('qTaxYear').value) || T.defaultTaxYear(),
+              gross_income: Number(document.getElementById('qGross').value || 0),
+              net_profit: Number(document.getElementById('qNet').value || 0),
+              tax_return_id: activeReturn ? activeReturn.id : null,
+            },
+          });
+          stepIndex = 0;
+          renderStep();
+          T.toast(`${questionnaire.total_steps} deduction categories loaded`, 'success');
+        } catch (error) {
+          T.toast(error.message, 'error');
+        } finally {
+          T.setLoading(button, false);
+        }
+      };
+
+      try {
+        await loadReturns();
+      } catch (error) {
+        T.toast(error.message, 'error');
+      }
+    });
+  </script>
+</body>
+</html>

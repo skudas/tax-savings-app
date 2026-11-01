@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Tax Savings MVP{% endblock %}
+
+{% block content %}
+<h1>Member Dashboard</h1>
+
+<nav class="tabs">
+    <button class="tab-btn active" onclick="showTab('transactions')">Transactions</button>
+    <button class="tab-btn" onclick="showTab('summary')">Summary</button>
+</nav>
+
+<div id="transactions" class="tab-content active">
+    <h2>Transactions</h2>
+
+    <div style="margin-bottom: 2rem;">
+        <h3>Upload Transactions</h3>
+        <form onsubmit="handleTransactionUpload(event)">
+            <div class="form-group">
+                <label for="csv_file">CSV File</label>
+                <input type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                <small>Format: date, amount, description, bank_account_last_4 (dates as YYYY-MM-DD)</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Upload</button>
+        </form>
+    </div>
+
+    <div id="transactions-list"></div>
+</div>
+
+<div id="summary" class="tab-content">
+    <h2>Monthly Summary</h2>
+    <div id="summary-list"></div>
+</div>
+
+<script>
+function showTab(tabName) {
+    // Hide all tabs
+    document.querySelectorAll('.tab-content').forEach(el => {
+        el.classList.remove('active');
+    });
+
+    // Remove active class from all buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+
+    // Show selected tab
+    document.getElementById(tabName).classList.add('active');
+    event.target.classList.add('active');
+
+    // Load data
+    if (tabName === 'transactions') {
+        loadTransactions();
+    } else if (tabName === 'summary') {
+        loadMonthlySummary();
+    }
+}
+
+// Load on page load
+window.addEventListener('DOMContentLoaded', () => {
+    loadTransactions();
+    loadMonthlySummary();
+});
+</script>
+
+<style>
+.tabs {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    border-bottom: 2px solid var(--gray-200);
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    font-size: 1rem;
+    color: var(--gray-700);
+    border-bottom: 3px solid transparent;
+    transition: all 0.3s;
+}
+
+.tab-btn.active {
+    color: var(--primary-color);
+    border-bottom-color: var(--primary-color);
+}
+
+.tab-btn:hover {
+    color: var(--primary-color);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+</style>
+{% endblock %}

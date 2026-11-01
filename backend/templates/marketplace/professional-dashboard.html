@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Manage your professional profile, earnings, pending consultations, and client messages.">
+  <title>Professional Dashboard | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="container">
+    <div id="professionalRoot">
+      <div class="loading-block" style="padding-top:5rem">
+        <div class="spinner"></div>
+        <span>Loading your practice...</span>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('professional');
+      renderFooter();
+
+      const root = document.getElementById('professionalRoot');
+      const messagesUrl = '/marketplace/messages.html';
+      const profileEditUrl = '/dashboard/professional.html';
+
+      const state = {
+        user: null,
+        profile: null,
+        earnings: null,
+        bookings: [],
+        unread: 0,
+        errors: { profile: null, bookings: null, earnings: null, messages: null }
+      };
+
+      function fullName(user) {
+        return `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email;
+      }
+
+      function messagesLink(userId, name) {
+        if (!userId) return messagesUrl;
+        return `${messagesUrl}?user_id=${encodeURIComponent(userId)}&name=${encodeURIComponent(name || '')}`;
+      }
+
+      function safeMeetingUrl(value) {
+        if (!value) return '';
+        try {
+          const url = new URL(value);
+          return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+        } catch (error) {
+          return '';
+        }
+      }
+
+      function profileBookings() {
+        return (state.bookings || [])
+          .filter((booking) => Number(booking.professional_id) === Number(state.user.id));
+      }
+
+      function pendingBookings() {
+        return profileBookings()
+          .filter((booking) => String(booking.status).toLowerCase() === 'pending')
+          .sort((a, b) => (parseDate(a.scheduled_at)?.getTime() || 0) - (parseDate(b.scheduled_at)?.getTime() || 0));
+      }
+
+      function totalEarnings() {
+        return Number(state.earnings?.total_earnings || 0);
+      }
+
+      function currentBalance() {
+        return Number(state.earnings?.current_balance || 0);
+      }
+
+      function commissionsPaid() {
+        return Number(state.earnings?.total_commissions_paid || 0);
+      }
+
+      function subscriptionStatus() {
+        return state.earnings?.subscription_status || 'not_active';
+      }
+
+      function skeleton() {
+        root.innerHTML = `
+          <div class="dashboard-head">
+            <div>
+              <div class="skeleton skeleton-line w-40" style="height:12px"></div>
+              <div class="skeleton skeleton-line w-60" style="height:34px;margin-top:.6rem"></div>
+              <div class="skeleton skeleton-line w-80"></div>
+            </div>
+          </div>
+          <div class="panel mb-5">
+            <div class="panel-body">
+              <div class="row" style="align-items:flex-start">
+                <div class="skeleton skeleton-avatar"></div>
+                <div style="flex:1">
+                  <div class="skeleton skeleton-line w-40"></div>
+                  <div class="skeleton skeleton-line w-80"></div>
+                  <div class="skeleton skeleton-line w-60" style="margin:0"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="stat-grid">
+            ${Array.from({ length: 4 }).map(() => `
+              <div class="stat-card">
+                <div class="skeleton skeleton-avatar"></div>
+                <div style="flex:1">
+                  <div class="skeleton skeleton-line w-60"></div>
+                  <div class="skeleton skeleton-line w-40" style="margin:0"></div>
+                </div>
+              </div>`).join('')}
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div class="skeleton skeleton-line w-40" style="margin:0"></div></div>
+            <div class="panel-body">${spinnerBlock('Loading bookings and earnings...')}</div>
+          </div>`;
+      }
+
+      function renderAuthWallMessage() {
+        renderAuthWall(root, {
+          title: 'Sign in to your professional dashboard',
+          message: 'Manage your public profile, review pending consultations, track earnings, and reply to clients.'
+        });
+      }
+
+      function renderProfileSummary() {
+        const name = fullName(state.user);
+        const profile = state.profile;
+
+        if (!profile) {
+          return `
+            <div class="panel mb-5">
+              <div class="panel-body">
+                <div class="row-wrap" style="align-items:flex-start">
+                  ${avatar(name, 'avatar-xl')}
+                  <div style="flex:1;min-width:240px">
+                    <h2>${escapeHtml(name)}</h2>
+                    <p class="muted">Your professional profile is not set up yet.</p>
+                    <p class="small muted">Add your bio, credentials, and services so clients can find and book you in the marketplace.</p>
+                  </div>
+                  <div class="stack">
+                    <a class="btn btn-primary" href="${profileEditUrl}">${icon('edit', 'icon-sm')} Complete profile</a>
+                    <a class="btn btn-outline" href="${messagesUrl}">${icon('message', 'icon-sm')} Messages</a>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+        }
+
+        const certifications = (profile.certifications || []).filter(Boolean);
+        const specialties = (profile.specialties || []).filter(Boolean);
+        const starting = minRate(profile.rate_cards);
+        const services = Array.isArray(profile.rate_cards) ? profile.rate_cards.length : 0;
+
+        return `
+          <div class="panel mb-5">
+            <div class="panel-body">
+              <div class="row-wrap" style="align-items:flex-start;gap:1.1rem">
+                ${avatar(name, 'avatar-xl')}
+                <div style="flex:1;min-width:240px">
+                  <div class="row-wrap">
+                    <h2>${escapeHtml(name)}</h2>
+                    ${profile.verified
+                      ? `<span class="badge badge-verified">${icon('check', 'icon-sm')} Verified</span>`
+                      : `<span class="badge badge-amber">Verification pending</span>`}
+                  </div>
+                  <p class="muted small mt-1">${certifications.length ? escapeHtml(certifications.join(' · ')) : 'Tax professional'}</p>
+                  ${ratingBlock(profile.average_rating, profile.total_consultations)}
+                  <p class="small mt-3">${escapeHtml(profile.bio || 'Add a short bio to help clients understand how you can help their business.')}</p>
+                  <div class="tag-row mt-3">
+                    ${specialties.slice(0, 6).map((item) => `<span class="tag blue">${escapeHtml(item)}</span>`).join('') || '<span class="tag">Small business tax</span>'}
+                    ${specialties.length > 6 ? `<span class="tag">+${specialties.length - 6} more</span>` : ''}
+                  </div>
+                </div>
+                <div class="stack">
+                  <a class="btn btn-outline" href="/marketplace/profile.html?id=${profile.id}">${icon('eye', 'icon-sm')} View public profile</a>
+                  <a class="btn btn-primary" href="${messagesUrl}">
+                    ${icon('message', 'icon-sm')} Messages
+                    ${state.unread ? `<span class="unread-pill">${state.unread}</span>` : ''}
+                  </a>
+                  <a class="btn btn-ghost" href="${profileEditUrl}">${icon('edit', 'icon-sm')} Edit profile</a>
+                </div>
+              </div>
+              <div class="detail-grid">
+                <div class="detail-item"><span class="label">Experience</span><span class="value">${Number(profile.years_experience || 0) || '—'} years</span></div>
+                <div class="detail-item"><span class="label">Consultations</span><span class="value">${Number(profile.total_consultations || 0)} completed</span></div>
+                <div class="detail-item"><span class="label">Services</span><span class="value">${services} offered</span></div>
+                <div class="detail-item"><span class="label">Starting price</span><span class="value">${starting === null ? 'Contact for pricing' : money(starting)}</span></div>
+              </div>
+            </div>
+          </div>`;
+      }
+
+      function renderStats() {
+        const pending = pendingBookings().length;
+
+        return `
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="icon-box green">${icon('dollar', 'icon-lg')}</div>
+              <div class="stat-meta">
+                <span>Total earnings</span>
+                <strong>${money(totalEarnings())}</strong>
+                <small>Across all paid consultations</small>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box">${icon('credit', 'icon-lg')}</div>
+              <div class="stat-meta">
+                <span>Current balance</span>
+                <strong>${money(currentBalance())}</strong>
+                <small>Available to withdraw</small>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box amber">${icon('calendar', 'icon-lg')}</div>
+              <div class="stat-meta">
+                <span>Pending requests</span>
+                <strong>${pending}</strong>
+                <small>${pending ? 'Awaiting your confirmation' : 'You are all caught up'}</small>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box purple">${icon('message', 'icon-lg')}</div>
+              <div class="stat-meta">
+                <span>Unread messages</span>
+                <strong>${state.unread}</strong>
+                <small>${state.unread ? 'Reply to your clients' : 'No unread messages'}</small>
+              </div>
+            </div>
+          </div>`;
+      }
+
+      function renderEarnings() {
+        const status = subscriptionStatus();
+        const hasEarnings = Boolean(state.earnings);
+        const statusBadgeMarkup = status === 'active'
+          ? '<span class="badge badge-green">Subscription active</span>'
+          : '<span class="badge badge-amber">Payouts not active</span>';
+
+        return `
+          <div class="panel mb-5">
+            <div class="panel-head">
+              <div>
+                <h2>Earnings</h2>
+                <p class="small muted">Gross volume, platform fees, and available balance</p>
+              </div>
+              ${statusBadgeMarkup}
+            </div>
+            <div class="panel-body">
+              <div class="earnings-hero">
+                <div class="earnings-item">
+                  <span>Total earnings</span>
+                  <strong>${money(totalEarnings())}</strong>
+                  <small>Gross consultation volume</small>
+                </div>
+                <div class="earnings-item muted">
+                  <span>Commissions paid</span>
+                  <strong>${money(commissionsPaid())}</strong>
+                  <small>Platform fees</small>
+                </div>
+                <div class="earnings-item">
+                  <span>Current balance</span>
+                  <strong>${money(currentBalance())}</strong>
+                  <small>Available to withdraw</small>
+                </div>
+              </div>
+              ${state.errors.earnings ? `
+                <div class="alert alert-error mt-4">
+                  ${icon('alert')}
+                  <div class="small">${escapeHtml(state.errors.earnings)}</div>
+                </div>` : ''}
+              ${!hasEarnings ? `
+                <div class="alert alert-warning mt-4">
+                  ${icon('info')}
+                  <div class="small"><strong>Earnings are not available yet.</strong> Activate your professional subscription to unlock payouts and full earnings tracking.</div>
+                </div>` : ''}
+            </div>
+          </div>`;
+      }
+
+      function renderBookingCard(booking) {
+        const date = parseDate(booking.scheduled_at) || new Date();
+        const client = booking.client_name || 'Client';
+        const meeting = safeMeetingUrl(booking.meeting_link);
+
+        return `
+          <div class="appointment-card">
+            <div class="appt-date">
+              <span>${date.toLocaleDateString('en-US', { month: 'short' })}</span>
+              <strong>${date.getDate()}</strong>
+            </div>
+            <div class="appt-main">
+              <h3>${escapeHtml(booking.service_name || 'Consultation')} ${statusBadge(booking.status)}</h3>
+              <p>with ${escapeHtml(client)}</p>
+              <div class="appt-meta">
+                <span>${icon('clock', 'icon-sm')} ${formatTime(booking.scheduled_at)} · ${durationLabel(booking.duration_minutes)}</span>
+                <span>${icon('calendar', 'icon-sm')} ${formatDate(booking.scheduled_at)}</span>
+              </div>
+            </div>
+            <div class="appt-side">
+              <div class="price"><span>You receive</span><strong>${money(booking.professional_receives, 2)}</strong></div>
+              <div class="appt-actions">
+                <button class="btn btn-secondary btn-sm" type="button" data-confirm="${booking.id}">${icon('check', 'icon-sm')} Confirm</button>
+                <button class="btn btn-soft-danger btn-sm" type="button" data-decline="${booking.id}">Decline</button>
+                <a class="btn btn-outline btn-sm" href="${messagesLink(booking.client_id, client)}">${icon('message', 'icon-sm')} Message</a>
+                ${meeting ? `<a class="btn btn-ghost btn-sm" href="${escapeHtml(meeting)}" target="_blank" rel="noopener noreferrer">${icon('video', 'icon-sm')} Join</a>` : ''}
+              </div>
+            </div>
+          </div>`;
+      }
+
+      function renderPending() {
+        if (state.errors.bookings) {
+          return `<div class="panel-body">${errorState(state.errors.bookings, 'retryBookings')}</div>`;
+        }
+
+        const pending = pendingBookings();
+        if (!pending.length) {
+          return `<div class="panel-body">
+            ${emptyState({
+              icon: 'checkCircle',
+              title: 'No pending consultations',
+              message: 'New booking requests will appear here for your review. Share your profile to attract more clients.',
+              action: { href: messagesUrl, label: 'Open messages' }
+            })}
+          </div>`;
+        }
+
+        return `<div class="appointment-list">${pending.map(renderBookingCard).join('')}</div>`;
+      }
+
+      function renderDashboard() {
+        const name = state.user.first_name || 'there';
+        const pending = pendingBookings().length;
+
+        root.innerHTML = `
+          <div class="dashboard-head">
+            <div>
+              <span class="eyebrow">${icon('briefcase', 'icon-sm')} Professional dashboard</span>
+              <h1>Your practice, ${escapeHtml(name)}</h1>
+              <p>Review incoming requests, track earnings, and keep your profile up to date.</p>
+            </div>
+            <div class="row">
+              <a class="btn btn-outline" href="${messagesUrl}">
+                ${icon('message', 'icon-sm')} Messages
+                ${state.unread ? `<span class="unread-pill">${state.unread}</span>` : ''}
+              </a>
+              ${state.profile ? `<a class="btn btn-primary" href="/marketplace/profile.html?id=${state.profile.id}">${icon('eye', 'icon-sm')} Public profile</a>` : `<a class="btn btn-primary" href="${profileEditUrl}">${icon('edit', 'icon-sm')} Complete profile</a>`}
+            </div>
+          </div>
+
+          ${renderProfileSummary()}
+          ${renderStats()}
+          ${renderEarnings()}
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Pending consultations</h2>
+                <p class="small muted">Confirm or decline new booking requests</p>
+              </div>
+              <span class="badge ${pending ? 'badge-amber' : 'badge-green'}">${pending ? `${pending} waiting` : 'All clear'}</span>
+            </div>
+            ${renderPending()}
+          </div>
+
+          <div class="alert alert-info mt-4">
+            ${icon('info')}
+            <div class="small"><strong>Reminder:</strong> Confirming a request reserves the time slot and notifies the client. Add a meeting link after confirming so your client knows how to join.</div>
+          </div>`;
+
+        bindEvents();
+      }
+
+      function bindEvents() {
+        root.querySelectorAll('#retryBookings').forEach((button) => {
+          button.addEventListener('click', () => loadData(state.user));
+        });
+
+        root.querySelectorAll('[data-confirm]').forEach((button) => {
+          button.addEventListener('click', () => updateBooking(button, button.dataset.confirm, 'confirmed', 'Consultation confirmed. The client has been notified.'));
+        });
+
+        root.querySelectorAll('[data-decline]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const confirmed = await confirmDialog({
+              title: 'Decline this consultation?',
+              message: 'The client will be notified and the time slot will be released.',
+              confirmText: 'Decline request',
+              cancelText: 'Keep request',
+              danger: true
+            });
+            if (confirmed) {
+              updateBooking(button, button.dataset.decline, 'cancelled', 'Consultation declined.');
+            }
+          });
+        });
+      }
+
+      async function updateBooking(button, id, status, successMessage) {
+        setButtonLoading(button, true);
+        try {
+          await api(`/consultations/${id}`, { method: 'PUT', body: { status } });
+          showToast(successMessage, 'success');
+          const data = await api('/consultations/my-bookings?limit=100');
+          state.bookings = Array.isArray(data) ? data : [];
+          state.errors.bookings = null;
+          renderDashboard();
+        } catch (error) {
+          showToast(error.message || 'Could not update the consultation.', 'error');
+          setButtonLoading(button, false);
+        }
+      }
+
+      async function loadData(user) {
+        state.user = user;
+        skeleton();
+
+        const results = await Promise.allSettled([
+          api('/professionals/profile'),
+          api('/consultations/my-bookings?limit=100'),
+          api('/payments/earnings'),
+          api('/messages/unread')
+        ]);
+
+        if (results[0].status === 'fulfilled') {
+          state.profile = results[0].value;
+          state.errors.profile = null;
+        } else if ([403, 404].includes(results[0].reason?.status)) {
+          state.profile = null;
+          state.errors.profile = null;
+        } else {
+          state.profile = null;
+          state.errors.profile = results[0].reason?.message || 'Profile could not be loaded.';
+        }
+
+        if (results[1].status === 'fulfilled') {
+          state.bookings = Array.isArray(results[1].value) ? results[1].value : [];
+          state.errors.bookings = null;
+        } else {
+          state.bookings = [];
+          state.errors.bookings = results[1].reason?.message || 'Consultations could not be loaded.';
+        }
+
+        if (results[2].status === 'fulfilled') {
+          state.earnings = results[2].value;
+          state.errors.earnings = null;
+        } else if (results[2].reason?.status === 404) {
+          state.earnings = null;
+          state.errors.earnings = null;
+        } else {
+          state.earnings = null;
+          state.errors.earnings = results[2].reason?.message || 'Earnings could not be loaded.';
+        }
+
+        if (results[3].status === 'fulfilled') {
+          state.unread = Number(results[3].value?.unread_count || 0);
+          state.errors.messages = null;
+        } else {
+          state.unread = 0;
+          state.errors.messages = results[3].reason?.message || 'Messages could not be loaded.';
+        }
+
+        if (state.errors.bookings && state.errors.earnings && state.errors.profile) {
+          root.innerHTML = `
+            <div class="dashboard-head">
+              <div>
+                <span class="eyebrow">Professional dashboard</span>
+                <h1>Your practice, ${escapeHtml(user.first_name || 'there')}</h1>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body">
+                <div class="empty-state" style="border:0">
+                  <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+                  <h3>We couldn't load your dashboard</h3>
+                  <p>${escapeHtml(state.errors.bookings)}</p>
+                  <button class="btn btn-primary" id="retryAll" type="button">Try again</button>
+                </div>
+              </div>
+            </div>`;
+          const retry = document.getElementById('retryAll');
+          if (retry) retry.addEventListener('click', () => loadData(state.user));
+          return;
+        }
+
+        renderDashboard();
+      }
+
+      async function init() {
+        try {
+          const user = await getCurrentUser();
+          if (!user) {
+            renderAuthWallMessage();
+            return;
+          }
+          await loadData(user);
+        } catch (error) {
+          renderAuthWall(root, {
+            title: 'Sign in to view your practice',
+            message: 'We could not verify your session. Please sign in again to continue.'
+          });
+        }
+      }
+
+      init();
+    });
+  </script>
+</body>
+</html>

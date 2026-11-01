@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Browse vetted CPAs, enrolled agents, and tax professionals. Compare specialties, experience, and pricing.">
+  <title>Find Tax Professionals | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="container">
+    <div class="page-head">
+      <div>
+        <span class="eyebrow">Marketplace</span>
+        <h1>Find a tax professional</h1>
+        <p>Compare vetted CPAs and enrolled agents by specialty, experience, and transparent pricing.</p>
+      </div>
+      <div class="row">
+        <a class="btn btn-outline" href="/marketplace/client-dashboard.html">My dashboard</a>
+        <a class="btn btn-primary" href="/marketplace/messages.html">Messages</a>
+      </div>
+    </div>
+
+    <section class="panel mb-5">
+      <div class="panel-body" style="padding:1rem">
+        <form id="filterForm" class="row-wrap" role="search">
+          <div class="search-box" style="flex:1;min-width:240px">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input class="input" id="searchInput" type="search" placeholder="Search by name, CPA, S-Corp, bookkeeping..." autocomplete="off" aria-label="Search tax professionals" style="height:46px;box-shadow:none;border-color:var(--line-strong)">
+          </div>
+          <select class="select" id="specialtyFilter" aria-label="Filter by specialty" style="width:auto;min-width:190px">
+            <option value="">All specialties</option>
+          </select>
+          <select class="select" id="sortFilter" aria-label="Sort professionals" style="width:auto;min-width:180px">
+            <option value="rating">Highest rated</option>
+            <option value="consultations">Most consultations</option>
+            <option value="experience">Most experience</option>
+            <option value="price">Lowest price</option>
+          </select>
+          <label class="check-row" style="white-space:nowrap"><input type="checkbox" id="verifiedFilter"> Verified only</label>
+          <button class="btn btn-primary" type="submit">Search</button>
+          <button class="btn btn-ghost" id="resetFilters" type="button">Reset</button>
+        </form>
+      </div>
+    </section>
+
+    <div class="results-toolbar mb-4">
+      <div>
+        <h2>Tax professionals</h2>
+        <p id="resultCount">Loading available experts...</p>
+      </div>
+      <span class="badge badge-green">Vetted network</span>
+    </div>
+
+    <div id="results" class="pro-grid" aria-live="polite"></div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('browse');
+      renderFooter();
+
+      const results = document.getElementById('results');
+      const resultCount = document.getElementById('resultCount');
+      const filterForm = document.getElementById('filterForm');
+      const searchInput = document.getElementById('searchInput');
+      const specialtyFilter = document.getElementById('specialtyFilter');
+      const sortFilter = document.getElementById('sortFilter');
+      const verifiedFilter = document.getElementById('verifiedFilter');
+
+      const state = {
+        all: [],
+        query: '',
+        specialty: '',
+        sort: 'rating',
+        verified: false,
+        source: 'verified'
+      };
+
+      const skeletonCards = Array.from({ length: 6 }).map(() => `
+        <div class="skeleton-card">
+          <div class="row" style="align-items:flex-start">
+            <div class="skeleton skeleton-avatar"></div>
+            <div style="flex:1">
+              <div class="skeleton skeleton-line w-60"></div>
+              <div class="skeleton skeleton-line w-40"></div>
+              <div class="skeleton skeleton-line w-80" style="margin-bottom:0"></div>
+            </div>
+          </div>
+          <div class="skeleton skeleton-line w-100 mt-4"></div>
+          <div class="skeleton skeleton-line w-80"></div>
+          <div class="skeleton skeleton-line w-40"></div>
+          <div class="row-between mt-4">
+            <div class="skeleton skeleton-line w-40" style="margin:0"></div>
+            <div class="skeleton skeleton-line w-40" style="margin:0"></div>
+          </div>
+        </div>`).join('');
+
+      function profileLink(profile) {
+        return `/marketplace/profile.html?id=${profile.id}`;
+      }
+
+      function bookingLink(profile) {
+        return `/marketplace/book.html?profile_id=${profile.id}`;
+      }
+
+      function matches(profile) {
+        if (state.query) {
+          const haystack = [
+            profile.user_name,
+            profile.bio,
+            ...(profile.specialties || []),
+            ...(profile.certifications || [])
+          ].filter(Boolean).join(' ').toLowerCase();
+          if (!haystack.includes(state.query.toLowerCase())) return false;
+        }
+
+        if (state.specialty) {
+          const specialty = state.specialty.toLowerCase();
+          if (!(profile.specialties || []).some((item) => String(item).toLowerCase() === specialty)) return false;
+        }
+
+        if (state.verified && !profile.verified) return false;
+
+        return true;
+      }
+
+      function sortProfessionals(list) {
+        return list.slice().sort((a, b) => {
+          switch (state.sort) {
+            case 'price': {
+              const priceA = minRate(a.rate_cards) ?? Number.MAX_SAFE_INTEGER;
+              const priceB = minRate(b.rate_cards) ?? Number.MAX_SAFE_INTEGER;
+              return priceA - priceB;
+            }
+            case 'experience':
+              return Number(b.years_experience || 0) - Number(a.years_experience || 0);
+            case 'consultations':
+              return Number(b.total_consultations || 0) - Number(a.total_consultations || 0);
+            default:
+              return Number(b.average_rating || 0) - Number(a.average_rating || 0)
+                || Number(b.total_consultations || 0) - Number(a.total_consultations || 0);
+          }
+        });
+      }
+
+      function renderCard(profile) {
+        const certifications = (profile.certifications || []).filter(Boolean);
+        const specialties = (profile.specialties || []).filter(Boolean);
+        const starting = minRate(profile.rate_cards);
+        const lowestCard = (profile.rate_cards || []).slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
+        const priceSuffix = lowestCard && lowestCard.service_type === 'hourly' ? '/hr' : lowestCard ? '/session' : '';
+        const verified = profile.verified
+          ? `<span class="badge badge-verified">${icon('check', 'icon-sm')} Verified</span>`
+          : `<span class="badge badge-gray">Profile in review</span>`;
+
+        return `
+          <article class="pro-card">
+            <div class="pro-card-top">
+              ${avatar(profile.user_name)}
+              <div class="pro-identity">
+                <h3>${escapeHtml(profile.user_name)} ${verified}</h3>
+                <p class="pro-title">${certifications.length ? escapeHtml(certifications.join(' · ')) : 'Tax professional'}</p>
+                ${ratingBlock(profile.average_rating, profile.total_consultations)}
+              </div>
+            </div>
+            <p class="pro-bio">${escapeHtml(profile.bio || 'Experienced tax professional ready to help your business stay compliant and save more.')}</p>
+            <div class="tag-row">
+              ${specialties.slice(0, 4).map((item) => `<span class="tag blue">${escapeHtml(item)}</span>`).join('') || '<span class="tag">Small business tax</span>'}
+              ${specialties.length > 4 ? `<span class="tag">+${specialties.length - 4} more</span>` : ''}
+            </div>
+            <div class="pro-meta">
+              <span><strong>${Number(profile.years_experience || 0) || '—'}</strong> years experience</span>
+              <span><strong>${Number(profile.total_consultations || 0)}</strong> consultations</span>
+            </div>
+            <div class="pro-card-footer">
+              <div class="price">
+                <span>${starting === null ? 'Pricing' : 'Starting at'}</span>
+                <strong>${starting === null ? 'Contact' : `${money(starting)} <em>${priceSuffix}</em>`}</strong>
+              </div>
+              <div class="card-actions">
+                <a class="btn btn-outline btn-sm" href="${profileLink(profile)}">View</a>
+                <a class="btn btn-primary btn-sm" href="${bookingLink(profile)}">Book</a>
+              </div>
+            </div>
+          </article>`;
+      }
+
+      function renderResults() {
+        const filtered = sortProfessionals(state.all.filter(matches));
+        const sourceNote = state.source === 'fallback' ? ' · showing all profiles while verification is completed' : '';
+        resultCount.textContent = `${filtered.length} professional${filtered.length === 1 ? '' : 's'} available${sourceNote}`;
+
+        if (!filtered.length) {
+          results.innerHTML = `
+            <div class="empty-state">
+              <div class="icon-box">${icon('search', 'icon-lg')}</div>
+              <h3>No professionals match your search</h3>
+              <p>Try a broader keyword or remove a filter. New experts join the marketplace every week.</p>
+              <button class="btn btn-primary" id="emptyReset" type="button">Clear filters</button>
+            </div>`;
+          const reset = document.getElementById('emptyReset');
+          if (reset) reset.addEventListener('click', resetFilters);
+          return;
+        }
+
+        results.innerHTML = filtered.map(renderCard).join('');
+      }
+
+      function populateSpecialties() {
+        const specialties = new Set();
+        state.all.forEach((profile) => (profile.specialties || []).forEach((item) => specialties.add(item)));
+        const current = specialtyFilter.value;
+        specialtyFilter.innerHTML = '<option value="">All specialties</option>' + Array.from(specialties)
+          .filter(Boolean)
+          .sort((a, b) => String(a).localeCompare(String(b)))
+          .map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`)
+          .join('');
+        if (current && Array.from(specialties).includes(current)) {
+          specialtyFilter.value = current;
+        }
+      }
+
+      function resetFilters() {
+        state.query = '';
+        state.specialty = '';
+        state.sort = 'rating';
+        state.verified = false;
+        searchInput.value = '';
+        specialtyFilter.value = '';
+        sortFilter.value = 'rating';
+        verifiedFilter.checked = false;
+        renderResults();
+      }
+
+      function syncFilters() {
+        state.query = searchInput.value.trim();
+        state.specialty = specialtyFilter.value;
+        state.sort = sortFilter.value;
+        state.verified = verifiedFilter.checked;
+        renderResults();
+      }
+
+      async function loadProfessionals() {
+        results.innerHTML = `
+          <div class="loading-block" style="grid-column:1/-1;padding-bottom:.5rem">
+            <div class="spinner"></div>
+            <span>Loading available experts...</span>
+          </div>${skeletonCards}`;
+        resultCount.textContent = 'Loading available experts...';
+
+        try {
+          let professionals = await api('/professionals/?limit=100');
+          if (Array.isArray(professionals) && professionals.length === 0) {
+            const fallback = await api('/professionals/search?limit=100').catch(() => []);
+            if (Array.isArray(fallback) && fallback.length) {
+              professionals = fallback;
+              state.source = 'fallback';
+            }
+          }
+
+          state.all = Array.isArray(professionals) ? professionals : [];
+          populateSpecialties();
+          renderResults();
+        } catch (error) {
+          resultCount.textContent = 'Unable to load professionals';
+          results.innerHTML = `
+            <div class="empty-state">
+              <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+              <h3>We couldn't load the marketplace</h3>
+              <p>${escapeHtml(error.message || 'Check your connection and try again.')}</p>
+              <button class="btn btn-primary" id="retryLoad" type="button">Try again</button>
+            </div>`;
+          const retry = document.getElementById('retryLoad');
+          if (retry) retry.addEventListener('click', loadProfessionals);
+        }
+      }
+
+      filterForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        syncFilters();
+        results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+
+      searchInput.addEventListener('input', debounce(() => {
+        state.query = searchInput.value.trim();
+        renderResults();
+      }, 250));
+
+      [specialtyFilter, sortFilter].forEach((select) => {
+        select.addEventListener('change', syncFilters);
+      });
+
+      verifiedFilter.addEventListener('change', syncFilters);
+
+      document.getElementById('resetFilters').addEventListener('click', resetFilters);
+
+      loadProfessionals();
+    });
+  </script>
+</body>
+</html>

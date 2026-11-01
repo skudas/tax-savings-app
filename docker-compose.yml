@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  # Main application
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=dev
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./tax_savings.db}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - SQL_ECHO=false
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+    command: python -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+
+  # Optional PostgreSQL database (for production)
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=tax_savings_db
+      - POSTGRES_USER=tax_user
+      - POSTGRES_PASSWORD=secure_password_change_me
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
+
+# To use PostgreSQL, set in .env:
+# DATABASE_URL=postgresql://tax_user:secure_password_change_me@postgres/tax_savings_db

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Private messages between clients and tax professionals on TaxSavings Marketplace.">
+  <title>Messages | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="messages-page">
+    <div class="container" id="messagesContainer">
+      <div class="messages-shell" id="messagesShell">
+        <aside class="conv-sidebar">
+          <div class="conv-header">
+            <h1>Messages</h1>
+            <span id="inboxUnread"><span class="badge badge-gray">Loading</span></span>
+          </div>
+          <div class="conv-search">
+            <div class="search-box">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input class="input" id="conversationSearch" type="search" placeholder="Search conversations" aria-label="Search conversations" autocomplete="off" style="height:40px">
+            </div>
+          </div>
+          <div class="conv-scroll" id="conversationList" aria-live="polite">
+            <div class="loading-block">
+              <div class="spinner"></div>
+              <span>Loading conversations...</span>
+            </div>
+          </div>
+        </aside>
+
+        <section class="chat-panel" id="chatPanel" aria-label="Conversation">
+          <div class="chat-empty" id="chatEmpty">
+            <div class="icon-box"></div>
+            <h2>Your messages</h2>
+            <p>Select a conversation to view messages, or reach out to a tax professional from their profile.</p>
+          </div>
+
+          <div class="chat-active hidden" id="chatActive">
+            <div class="chat-header">
+              <button class="chat-back" id="chatBack" type="button" aria-label="Back to conversations"></button>
+              <span id="chatAvatar"></span>
+              <div class="chat-header-main">
+                <strong id="chatName">Conversation</strong>
+                <span><span class="online-dot"></span> TaxSavings member</span>
+              </div>
+            </div>
+            <div class="chat-body" id="chatBody" aria-live="polite"></div>
+            <form class="chat-composer" id="composer">
+              <textarea id="messageInput" rows="1" maxlength="2000" placeholder="Write a message..." aria-label="Message"></textarea>
+              <button class="btn btn-primary" id="sendButton" type="submit">Send</button>
+            </form>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('messages');
+      renderFooter();
+
+      const shell = document.getElementById('messagesShell');
+      const container = document.getElementById('messagesContainer');
+      const conversationList = document.getElementById('conversationList');
+      const conversationSearch = document.getElementById('conversationSearch');
+      const inboxUnread = document.getElementById('inboxUnread');
+      const chatEmpty = document.getElementById('chatEmpty');
+      const chatActive = document.getElementById('chatActive');
+      const chatBody = document.getElementById('chatBody');
+      const chatName = document.getElementById('chatName');
+      const chatAvatar = document.getElementById('chatAvatar');
+      const chatBack = document.getElementById('chatBack');
+      const composer = document.getElementById('composer');
+      const messageInput = document.getElementById('messageInput');
+      const sendButton = document.getElementById('sendButton');
+
+      chatEmpty.querySelector('.icon-box').innerHTML = icon('message', 'icon-lg');
+      chatBack.innerHTML = icon('chevronLeft', 'icon-lg');
+      sendButton.innerHTML = `${icon('send', 'icon-sm')} Send`;
+
+      const requestedUserId = Number(queryParam('user_id')) || null;
+      const requestedName = queryParam('name') || '';
+
+      let currentUser = null;
+      let conversations = [];
+      let activeUserId = null;
+      let activeName = '';
+      let messageItems = [];
+      let searchQuery = '';
+
+      function totalUnread() {
+        return conversations.reduce((sum, conv) => sum + Number(conv.unread_count || 0), 0);
+      }
+
+      function updateInboxBadge() {
+        const unread = totalUnread();
+        inboxUnread.innerHTML = unread
+          ? `<span class="badge badge-primary">${unread} unread</span>`
+          : '<span class="badge badge-gray">All read</span>';
+      }
+
+      function setActiveConversation(userId, name) {
+        activeUserId = Number(userId);
+        activeName = name || 'Conversation';
+        chatName.textContent = activeName;
+        chatAvatar.innerHTML = avatar(activeName, 'avatar-sm');
+      }
+
+      function updateConversationPreview(content) {
+        let conversation = conversations.find((conv) => Number(conv.user_id) === Number(activeUserId));
+        if (!conversation) {
+          conversation = {
+            user_id: activeUserId,
+            user_email: '',
+            user_name: activeName,
+            last_message: content,
+            last_message_at: new Date().toISOString(),
+            unread_count: 0
+          };
+          conversations.push(conversation);
+        } else {
+          conversation.last_message = content;
+          conversation.last_message_at = new Date().toISOString();
+          conversation.unread_count = 0;
+        }
+        conversations.sort((a, b) => (parseDate(b.last_message_at)?.getTime() || 0) - (parseDate(a.last_message_at)?.getTime() || 0));
+      }
+
+      function renderConversationList() {
+        updateInboxBadge();
+
+        const filtered = conversations.filter((conv) => {
+          if (!searchQuery) return true;
+          const haystack = `${conv.user_name || ''} ${conv.last_message || ''}`.toLowerCase();
+          return haystack.includes(searchQuery.toLowerCase());
+        });
+
+        if (!conversations.length) {
+          conversationList.innerHTML = `
+            <div class="empty-state" style="border:0;border-radius:0;padding:3rem 1.25rem;background:transparent">
+              <div class="icon-box">${icon('message', 'icon-lg')}</div>
+              <h3>No conversations yet</h3>
+              <p>Message a tax professional to start a conversation.</p>
+              <a class="btn btn-primary btn-sm" href="/marketplace/professional-list.html">Find an expert</a>
+            </div>`;
+          return;
+        }
+
+        if (!filtered.length) {
+          conversationList.innerHTML = `
+            <div class="empty-state" style="border:0;border-radius:0;padding:2.5rem 1.25rem;background:transparent">
+              <div class="icon-box">${icon('search', 'icon-lg')}</div>
+              <h3>No matches</h3>
+              <p>Try a different name or keyword.</p>
+            </div>`;
+          return;
+        }
+
+        conversationList.innerHTML = filtered.map((conv) => `
+          <button class="conv-item ${Number(conv.user_id) === Number(activeUserId) ? 'active' : ''}" type="button" data-user-id="${conv.user_id}" data-name="${escapeHtml(conv.user_name || 'Conversation')}">
+            ${avatar(conv.user_name, 'avatar-sm')}
+            <div class="conv-item-main">
+              <div class="conv-item-top">
+                <strong>${escapeHtml(conv.user_name || 'Conversation')}</strong>
+                <span>${conv.last_message_at ? timeAgo(conv.last_message_at) : ''}</span>
+              </div>
+              <p>${escapeHtml(conv.last_message || 'Start the conversation')}</p>
+            </div>
+            ${conv.unread_count ? `<span class="unread-pill">${conv.unread_count}</span>` : ''}
+          </button>`).join('');
+      }
+
+      function dayLabel(value) {
+        const date = parseDate(value);
+        if (!date) return '';
+        const today = dateKey(new Date());
+        const yesterdayDate = new Date();
+        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+        const key = dateKey(date);
+        if (key === today) return 'Today';
+        if (key === dateKey(yesterdayDate)) return 'Yesterday';
+        return formatDate(date);
+      }
+
+      function renderMessages() {
+        if (!messageItems.length) {
+          chatBody.innerHTML = `
+            <div class="chat-day">No messages yet</div>
+            <p class="small muted text-center">Send the first message to start the conversation.</p>`;
+          return;
+        }
+
+        let lastDay = '';
+        const markup = messageItems.map((message) => {
+          const mine = Number(message.sender_id) === Number(currentUser.id);
+          const label = dayLabel(message.created_at);
+          let output = '';
+          if (label && label !== lastDay) {
+            lastDay = label;
+            output += `<div class="chat-day">${escapeHtml(label)}</div>`;
+          }
+          output += `
+            <div class="msg-row ${mine ? 'mine' : ''}">
+              ${mine ? '' : avatar(message.sender_name || activeName, 'avatar-sm')}
+              <div class="bubble">
+                ${escapeHtml(message.content)}
+                <div class="msg-time">${formatTime(message.created_at)}</div>
+              </div>
+            </div>`;
+          return output;
+        }).join('');
+
+        chatBody.innerHTML = markup;
+        scrollToBottom(chatBody);
+      }
+
+      async function openConversation(userId, name) {
+        const targetId = Number(userId);
+        setActiveConversation(userId, name);
+        shell.classList.add('chat-open');
+        chatEmpty.classList.add('hidden');
+        chatActive.classList.remove('hidden');
+        chatBody.innerHTML = spinnerBlock('Loading conversation...');
+
+        conversationList.querySelectorAll('.conv-item').forEach((item) => {
+          item.classList.toggle('active', Number(item.dataset.userId) === Number(activeUserId));
+        });
+
+        try {
+          const data = await api(`/messages/with/${targetId}?limit=100`);
+          if (Number(activeUserId) !== targetId) return;
+          messageItems = Array.isArray(data) ? data : [];
+          renderMessages();
+
+          const conversation = conversations.find((conv) => Number(conv.user_id) === Number(activeUserId));
+          if (conversation) conversation.unread_count = 0;
+          renderConversationList();
+          messageInput.focus();
+        } catch (error) {
+          chatBody.innerHTML = `
+            <div class="panel-body">
+              ${errorState(error.message || 'Could not load this conversation.', 'retryChat')}
+            </div>`;
+          const retry = document.getElementById('retryChat');
+          if (retry) retry.addEventListener('click', () => openConversation(activeUserId, activeName));
+        }
+      }
+
+      async function sendMessage(event) {
+        event.preventDefault();
+        if (!activeUserId) return;
+
+        const content = messageInput.value.trim();
+        if (!content) {
+          messageInput.focus();
+          return;
+        }
+
+        setButtonLoading(sendButton, true);
+        try {
+          const sent = await api('/messages/', {
+            method: 'POST',
+            body: { recipient_id: activeUserId, content }
+          });
+          messageItems.push(sent);
+          renderMessages();
+          messageInput.value = '';
+          messageInput.style.height = 'auto';
+          updateConversationPreview(content);
+          renderConversationList();
+          messageInput.focus();
+        } catch (error) {
+          showToast(error.message || 'Could not send your message.', 'error');
+        } finally {
+          setButtonLoading(sendButton, false);
+        }
+      }
+
+      async function loadConversations() {
+        try {
+          const data = await api('/messages/conversations');
+          conversations = Array.isArray(data) ? data : [];
+        } catch (error) {
+          conversationList.innerHTML = `<div class="panel-body">${errorState(error.message || 'Could not load conversations.', 'retryConversations')}</div>`;
+          const retry = document.getElementById('retryConversations');
+          if (retry) retry.addEventListener('click', loadConversations);
+          return;
+        }
+
+        if (requestedUserId && !conversations.some((conv) => Number(conv.user_id) === Number(requestedUserId))) {
+          conversations.push({
+            user_id: requestedUserId,
+            user_email: '',
+            user_name: requestedName || `Member #${requestedUserId}`,
+            last_message: null,
+            last_message_at: null,
+            unread_count: 0
+          });
+        }
+
+        renderConversationList();
+      }
+
+      conversationList.addEventListener('click', (event) => {
+        const item = event.target.closest('.conv-item');
+        if (!item) return;
+        openConversation(item.dataset.userId, item.dataset.name);
+      });
+
+      conversationSearch.addEventListener('input', debounce(() => {
+        searchQuery = conversationSearch.value.trim();
+        renderConversationList();
+      }, 200));
+
+      chatBack.addEventListener('click', () => {
+        shell.classList.remove('chat-open');
+      });
+
+      composer.addEventListener('submit', sendMessage);
+
+      messageInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          composer.requestSubmit();
+        }
+      });
+
+      messageInput.addEventListener('input', () => {
+        messageInput.style.height = 'auto';
+        messageInput.style.height = `${Math.min(messageInput.scrollHeight, 120)}px`;
+      });
+
+      async function init() {
+        try {
+          const user = await getCurrentUser();
+          if (!user) {
+            renderAuthWall(container, {
+              title: 'Sign in to view your messages',
+              message: 'Chat privately with tax professionals about your consultations, documents, and tax questions.'
+            });
+            return;
+          }
+          currentUser = user;
+          await loadConversations();
+
+          if (requestedUserId) {
+            const conversation = conversations.find((conv) => Number(conv.user_id) === Number(requestedUserId));
+            await openConversation(requestedUserId, conversation?.user_name || requestedName);
+          }
+        } catch (error) {
+          renderAuthWall(container, {
+            title: 'Sign in to view your messages',
+            message: 'We could not verify your session. Please sign in again to continue.'
+          });
+        }
+      }
+
+      init();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="View a tax professional's credentials, services, transparent pricing, and client reviews.">
+  <title>Professional Profile | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div id="profileRoot">
+    <div class="container" style="padding-top:4rem;padding-bottom:4rem">
+      <div class="loading-block"><div class="spinner"></div><span>Loading professional profile...</span></div>
+    </div>
+  </div>
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('browse');
+      renderFooter();
+
+      const root = document.getElementById('profileRoot');
+      const profileId = queryParam('id');
+
+      function messageLink(prof) {
+        return `/messages.html?user_id=${encodeURIComponent(prof.user_id)}&name=${encodeURIComponent(prof.user_name)}`;
+      }
+
+      function bookLink(prof, serviceId) {
+        const base = `/marketplace/book.html?profile_id=${encodeURIComponent(prof.id)}`;
+        return serviceId ? `${base}&service_id=${encodeURIComponent(serviceId)}` : base;
+      }
+
+      function renderProfile(prof) {
+        const certifications = (prof.certifications || []).filter(Boolean);
+        const specialties = (prof.specialties || []).filter(Boolean);
+        const starting = minRate(prof.rate_cards);
+        const lowestCard = (prof.rate_cards || []).slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
+        const priceSuffix = lowestCard && lowestCard.service_type === 'hourly' ? '/hour' : lowestCard ? '/session' : '';
+        const verifiedBadge = prof.verified
+          ? `<span class="badge badge-verified">${icon('check', 'icon-sm')} Verified professional</span>`
+          : `<span class="badge badge-gray">Verification in review</span>`;
+        const topRated = Number(prof.average_rating || 0) >= 4.8 && Number(prof.total_consultations || 0) > 0
+          ? `<span class="badge badge-amber">${icon('star', 'icon-sm')} Top rated</span>`
+          : '';
+
+        document.title = `${prof.user_name} · ${certifications[0] || 'Tax Professional'} | TaxSavings Marketplace`;
+
+        root.innerHTML = `
+          <section class="profile-hero">
+            <div class="container profile-hero-inner">
+              <div class="avatar-ring">${avatar(prof.user_name, 'avatar-xl')}</div>
+              <div class="profile-hero-main">
+                <a class="btn btn-ghost btn-sm" href="/marketplace/browse.html" style="color:#bfdbfe;padding-left:0;min-height:auto">
+                  ${icon('arrowLeft', 'icon-sm')} Back to all professionals
+                </a>
+                <div class="row-wrap mt-2">
+                  ${verifiedBadge}
+                  ${topRated}
+                  ${certifications.length ? `<span class="badge badge-primary">${escapeHtml(certifications.join(' · '))}</span>` : ''}
+                </div>
+                <h1>${escapeHtml(prof.user_name)}</h1>
+                <p class="pro-title">${certifications.length ? escapeHtml(certifications.join(' · ')) : 'Tax professional'} · ${Number(prof.years_experience || 0)} years experience</p>
+                ${ratingBlock(prof.average_rating, prof.total_consultations)}
+                <div class="tag-row mt-3">
+                  ${specialties.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join('') || '<span class="tag">Small business tax</span>'}
+                </div>
+              </div>
+              <div class="profile-hero-actions">
+                <a class="btn btn-secondary btn-lg" href="${bookLink(prof)}">${icon('calendar', 'icon-sm')} Book consultation</a>
+                <a class="btn btn-outline btn-lg" href="${messageLink(prof)}">${icon('message', 'icon-sm')} Send message</a>
+              </div>
+            </div>
+          </section>
+
+          <main class="container profile-layout">
+            <div class="profile-main">
+              <section class="card card-pad-lg">
+                <div class="section-title">
+                  <h2>About ${escapeHtml((prof.user_name || '').split(' ')[0])}</h2>
+                  ${prof.verified ? `<span class="badge badge-green">${icon('shield', 'icon-sm')} Credential checked</span>` : ''}
+                </div>
+                <p class="profile-bio">${escapeHtml(prof.bio || 'This professional is building out their profile. Send a message to learn more about their experience and how they can help your business.')}</p>
+                <div class="detail-grid">
+                  <div class="detail-item">
+                    <span class="label">Certifications</span>
+                    <span class="value">${certifications.length ? escapeHtml(certifications.join(', ')) : '—'}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="label">Experience</span>
+                    <span class="value">${Number(prof.years_experience || 0) ? `${Number(prof.years_experience)} years` : '—'}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="label">Consultations</span>
+                    <span class="value">${Number(prof.total_consultations || 0)} completed</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="label">Specialties</span>
+                    <span class="value">${specialties.length ? escapeHtml(specialties.slice(0, 3).join(', ')) : 'Small business tax'}</span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="card card-pad-lg">
+                <div class="section-title">
+                  <h2>Services &amp; pricing</h2>
+                  <span class="badge badge-gray">Transparent rates</span>
+                </div>
+                ${(prof.rate_cards || []).length ? (prof.rate_cards || []).map((rate) => `
+                  <div class="rate-card">
+                    <div>
+                      <h3>${escapeHtml(rate.service_name)}</h3>
+                      <p>${escapeHtml(rate.description || 'A focused session tailored to your business and tax situation.')}</p>
+                      <div class="row-wrap mt-2">
+                        <span class="badge badge-gray">${serviceTypeLabel(rate.service_type)}</span>
+                        ${rate.duration_minutes ? `<span class="badge badge-gray">${icon('clock', 'icon-sm')} ${durationLabel(rate.duration_minutes)}</span>` : ''}
+                      </div>
+                    </div>
+                    <div class="rate-card-side">
+                      <div class="rate-card-price">
+                        <strong>${money(rate.price)}</strong>
+                        <span>${rate.service_type === 'hourly' ? 'per hour' : 'per session'}</span>
+                      </div>
+                      <a class="btn btn-primary btn-sm" href="${bookLink(prof, rate.id)}">Select</a>
+                    </div>
+                  </div>`).join('') : `
+                  <div class="empty-state" style="border:0;padding:2rem 1rem;background:transparent">
+                    <div class="icon-box">${icon('file', 'icon-lg')}</div>
+                    <h3>Services coming soon</h3>
+                    <p>This professional has not published rate cards yet. Send a message to request a quote.</p>
+                    <a class="btn btn-outline" href="${messageLink(prof)}">Message ${escapeHtml((prof.user_name || '').split(' ')[0])}</a>
+                  </div>`}
+              </section>
+
+              <section class="card card-pad-lg" id="reviewsSection">
+                <div class="section-title">
+                  <h2>Client reviews</h2>
+                  <span class="rating">${stars(prof.average_rating)} <strong>${Number(prof.average_rating || 0).toFixed(1)}</strong></span>
+                </div>
+                <div id="reviewsContent">${spinnerBlock('Loading reviews...')}</div>
+              </section>
+            </div>
+
+            <aside class="profile-side">
+              <div class="card card-pad booking-card">
+                <span class="overline">${starting === null ? 'Custom pricing' : 'Starting at'}</span>
+                <div class="big-price">${starting === null ? 'Let\'s talk' : `${money(starting)} <span>${priceSuffix}</span>`}</div>
+                ${ratingBlock(prof.average_rating, prof.total_consultations)}
+                <a class="btn btn-primary btn-lg btn-block" href="${bookLink(prof)}">${icon('calendar', 'icon-sm')} Book a consultation</a>
+                <a class="btn btn-outline btn-block" href="${messageLink(prof)}">${icon('message', 'icon-sm')} Ask a question</a>
+                <ul class="trust-list">
+                  <li>${icon('shield', 'icon-sm')}<span>${prof.verified ? 'Identity and credentials reviewed by TaxSavings' : 'Credentials pending review by TaxSavings'}</span></li>
+                  <li>${icon('lock', 'icon-sm')}<span>Secure checkout and encrypted payment details</span></li>
+                  <li>${icon('dollar', 'icon-sm')}<span>Clear pricing with the 20% platform fee included</span></li>
+                  <li>${icon('message', 'icon-sm')}<span>Private messaging before and after your consultation</span></li>
+                </ul>
+              </div>
+            </aside>
+          </main>`;
+
+        loadReviews(prof.id, prof);
+      }
+
+      async function loadReviews(id, prof) {
+        const container = document.getElementById('reviewsContent');
+        if (!container) return;
+        try {
+          const reviews = await api(`/professionals/${id}/reviews`);
+          renderReviews(container, Array.isArray(reviews) ? reviews : [], prof);
+        } catch (error) {
+          container.innerHTML = `
+            <div class="alert alert-info">
+              ${icon('info')}
+              <div>
+                <strong>Reviews are temporarily unavailable.</strong>
+                <div class="small">You can still book a consultation or message this professional with questions.</div>
+              </div>
+            </div>`;
+        }
+      }
+
+      function renderReviews(container, reviews, prof) {
+        if (!reviews.length) {
+          container.innerHTML = `
+            <div class="empty-state" style="border:0;padding:2.5rem 1rem;background:transparent">
+              <div class="icon-box amber">${icon('star', 'icon-lg')}</div>
+              <h3>No reviews yet</h3>
+              <p>${escapeHtml((prof.user_name || '').split(' ')[0])} is building their reputation on TaxSavings. Be the first to book and share your experience.</p>
+            </div>`;
+          return;
+        }
+
+        const average = reviews.reduce((sum, review) => sum + Number(review.rating || 0), 0) / reviews.length;
+        container.innerHTML = `
+          <div class="review-summary">
+            <div class="review-score">${average.toFixed(1)}</div>
+            <div>
+              ${stars(average)}
+              <p class="small muted mt-1">Based on ${reviews.length} verified review${reviews.length === 1 ? '' : 's'}</p>
+            </div>
+          </div>
+          ${reviews.map((review) => `
+            <article class="review">
+              <div class="review-head">
+                ${avatar(review.client_name || 'Client', 'avatar-sm')}
+                <div>
+                  <strong>${escapeHtml(review.client_name || 'Verified client')}</strong>
+                  <span>${formatDate(review.created_at)} · Verified consultation</span>
+                </div>
+                <span style="margin-left:auto">${stars(review.rating)}</span>
+              </div>
+              ${review.title ? `<h4 class="review-title">${escapeHtml(review.title)}</h4>` : ''}
+              <p class="review-text">${escapeHtml(review.content || '')}</p>
+            </article>`).join('')}`;
+      }
+
+      async function loadProfile() {
+        if (!profileId) {
+          root.innerHTML = `
+            <div class="container" style="padding-top:3rem;padding-bottom:4rem">
+              <div class="empty-state">
+                <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+                <h3>No professional selected</h3>
+                <p>Choose a tax professional from the marketplace to view their credentials, services, and reviews.</p>
+                <a class="btn btn-primary" href="/marketplace/browse.html">Browse professionals</a>
+              </div>
+            </div>`;
+          return;
+        }
+
+        try {
+          const prof = await api(`/professionals/${encodeURIComponent(profileId)}`);
+          renderProfile(prof);
+        } catch (error) {
+          root.innerHTML = `
+            <div class="container" style="padding-top:3rem;padding-bottom:4rem">
+              <div class="empty-state">
+                <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+                <h3>We couldn't find that professional</h3>
+                <p>${escapeHtml(error.status === 404 ? 'This profile may have been removed or is no longer accepting clients.' : (error.message || 'Please try again.'))}</p>
+                <a class="btn btn-primary" href="/marketplace/browse.html">Browse all professionals</a>
+              </div>
+            </div>`;
+        }
+      }
+
+      loadProfile();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Review job details, required skills, budget, and submit your bid on the TaxSavings job marketplace.">
+  <title>Job Details | TaxSavings Job Marketplace</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+  <link rel="stylesheet" href="/static/css/jobs.css">
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="container jobs-page">
+    <div id="detailRoot">
+      <div class="loading-block" style="padding-top:6rem">
+        <div class="spinner"></div>
+        <span>Loading job details...</span>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    (() => {
+      document.addEventListener('DOMContentLoaded', () => {
+        renderHeader('jobs');
+        renderFooter();
+
+        const root = document.getElementById('detailRoot');
+        const jobId = Number(queryParam('id'));
+        const state = {
+          user: null,
+          job: null,
+          poster: null
+        };
+
+        function validJobId() {
+          return Number.isInteger(jobId) && jobId > 0;
+        }
+
+        function redirectToLogin() {
+          const redirect = `${window.location.pathname}${window.location.search}`;
+          window.location.href = `/auth/login.html?redirect=${encodeURIComponent(redirect)}`;
+        }
+
+        function jobPath() {
+          return `/jobs/detail.html?id=${encodeURIComponent(jobId)}`;
+        }
+
+        function safeUrl(value) {
+          if (!value) return '';
+          try {
+            const url = new URL(value);
+            return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+          } catch (error) {
+            return '';
+          }
+        }
+
+        function applicantCount() {
+          if (Array.isArray(state.job.applications)) return state.job.applications.length;
+          return Number(state.job.applicant_count ?? state.job.application_count ?? 0);
+        }
+
+        function budgetText(job) {
+          const min = Number(job.budget_min || 0);
+          const max = Number(job.budget_max || 0);
+          const suffix = String(job.budget_type || '').toLowerCase() === 'hourly' ? '/hr' : '';
+          if (min && max && min !== max) return `${money(min)} - ${money(max)}${suffix}`;
+          return `${money(max || min)}${suffix}`;
+        }
+
+        function budgetTypeText(job) {
+          const type = String(job.budget_type || 'fixed').toLowerCase();
+          return { hourly: 'Hourly rate', fixed: 'Fixed price', range: 'Budget range' }[type] || 'Budget';
+        }
+
+        function experienceText(value) {
+          if (!value) return 'Any experience level';
+          const normalized = String(value).toLowerCase();
+          return { entry: 'Entry level', intermediate: 'Intermediate', expert: 'Expert' }[normalized]
+            || normalized.charAt(0).toUpperCase() + normalized.slice(1);
+        }
+
+        function statusBadge(status) {
+          const value = String(status || 'open').toLowerCase();
+          const label = value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+          return `<span class="job-status-badge ${escapeHtml(value)}">${escapeHtml(label)}</span>`;
+        }
+
+        function errorPage(title, message) {
+          root.innerHTML = `
+            <div class="job-error-page">
+              <div class="empty-state">
+                <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+                <h3>${escapeHtml(title)}</h3>
+                <p>${escapeHtml(message)}</p>
+                <a class="btn btn-primary" href="/jobs/browse.html">Browse open jobs</a>
+              </div>
+            </div>`;
+        }
+
+        async function enrichPoster(job) {
+          if (job.poster_name || !job.posted_by_user_id) return;
+          try {
+            const professionals = await api('/professionals/?limit=100');
+            const profile = (Array.isArray(professionals) ? professionals : []).find(
+              (item) => Number(item.user_id) === Number(job.posted_by_user_id)
+            );
+            if (profile) {
+              job.poster_name = profile.user_name;
+              job.poster_rating = profile.average_rating;
+              job.poster_total_consultations = profile.total_consultations;
+            }
+          } catch (error) {
+            console.warn('Could not enrich job poster details', error);
+          }
+        }
+
+        function renderPoster(job) {
+          const name = job.poster_name || 'Marketplace client';
+          const rating = Number(job.poster_rating || 0);
+          const consultations = Number(job.poster_total_consultations || 0);
+          const ratingMarkup = rating > 0
+            ? ratingBlock(rating, consultations)
+            : '<span class="hint">New poster · no reviews yet</span>';
+          return `
+            <div class="poster-card">
+              ${avatar(name)}
+              <div style="min-width:0">
+                <strong>${escapeHtml(name)}</strong>
+                <span>Job poster</span>
+                ${ratingMarkup}
+              </div>
+            </div>`;
+        }
+
+        function renderApplyPanel(job) {
+          const isOwner = state.user && Number(job.posted_by_user_id) === Number(state.user.id);
+          const isOpen = String(job.status || 'open').toLowerCase() === 'open';
+
+          if (!state.user) {
+            return `
+              <div class="apply-gate">
+                <div class="icon-box">${icon('lock', 'icon-lg')}</div>
+                <h3>Sign in to apply</h3>
+                <p>Create a free account or log in to submit your bid, timeline, and portfolio.</p>
+                <a class="btn btn-primary btn-block" href="/auth/login.html?redirect=${encodeURIComponent(jobPath())}">Log in to apply</a>
+                <a class="btn btn-outline btn-block mt-2" href="/auth/signup.html?redirect=${encodeURIComponent(jobPath())}">Create an account</a>
+              </div>`;
+          }
+
+          if (isOwner) {
+            return `
+              <div class="apply-gate">
+                <div class="icon-box green">${icon('briefcase', 'icon-lg')}</div>
+                <h3>This is your job posting</h3>
+                <p>Manage applications and update the status from your listings dashboard.</p>
+                <a class="btn btn-primary btn-block" href="/jobs/my-listings.html">Manage my listings</a>
+              </div>`;
+          }
+
+          if (!isOpen) {
+            return `
+              <div class="apply-gate">
+                <div class="icon-box amber">${icon('lock', 'icon-lg')}</div>
+                <h3>Applications are closed</h3>
+                <p>This job is currently ${escapeHtml(String(job.status || '').replace(/_/g, ' '))}. Browse other open projects to find your next opportunity.</p>
+                <a class="btn btn-outline btn-block" href="/jobs/browse.html">Browse open jobs</a>
+              </div>`;
+          }
+
+          return `
+            <form class="apply-form" id="applyForm" novalidate>
+              <div class="form-grid">
+                <div class="field">
+                  <label class="label" for="bidAmount">Your bid (USD) <span class="faint">*</span></label>
+                  <div class="input-group">
+                    <span class="input-icon">${icon('dollar')}</span>
+                    <input class="input" id="bidAmount" name="bid_amount" type="number" min="1" step="0.01" placeholder="1500" required>
+                  </div>
+                  <p class="error-text" id="bidError" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="label" for="proposedTimeline">Proposed timeline <span class="faint">*</span></label>
+                  <input class="input" id="proposedTimeline" name="proposed_timeline" type="text" maxlength="100" placeholder="e.g. 2 weeks" required>
+                  <p class="error-text" id="timelineError" hidden></p>
+                </div>
+                <div class="field">
+                  <label class="label" for="coverLetter">Cover letter <span class="faint">*</span></label>
+                  <textarea class="textarea" id="coverLetter" name="cover_letter" rows="6" maxlength="3000" placeholder="Explain your relevant tax or finance experience, your approach, and why you are a strong fit for this project." required></textarea>
+                  <div class="row-between">
+                    <p class="error-text" id="coverError" hidden></p>
+                    <span class="hint" id="coverCount">0 / 3000</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="label" for="portfolioUrl">Portfolio or LinkedIn URL <span class="faint">(optional)</span></label>
+                  <input class="input" id="portfolioUrl" name="portfolio_url" type="url" maxlength="500" placeholder="https://...">
+                  <p class="error-text" id="portfolioError" hidden></p>
+                </div>
+              </div>
+              <button class="btn btn-primary btn-block mt-4" id="applyButton" type="submit">Submit application</button>
+              <p class="hint mt-2" style="text-align:center">Your bid is non-binding until the job poster accepts it.</p>
+            </form>
+            <div id="applySuccess" hidden></div>`;
+        }
+
+        function render() {
+          const job = state.job;
+          const skills = (job.required_skills || []).filter(Boolean);
+          const deliverables = (job.deliverables || []).filter(Boolean);
+          const applicants = applicantCount();
+          const deadline = job.deadline ? formatDate(job.deadline) : 'Flexible';
+          const posted = job.created_at ? timeAgo(job.created_at) : 'Recently';
+
+          root.innerHTML = `
+            <div class="page-head">
+              <div>
+                <a class="hint" href="/jobs/browse.html" style="display:inline-flex;align-items:center;gap:.35rem">${icon('arrowLeft', 'icon-sm')} Back to all jobs</a>
+                <div class="row-wrap mt-3">
+                  <span class="badge badge-primary">${escapeHtml(job.category || 'General')}</span>
+                  ${statusBadge(job.status)}
+                  <span class="badge badge-gray">${escapeHtml(budgetTypeText(job))}</span>
+                </div>
+                <h1>${escapeHtml(job.title || 'Untitled job')}</h1>
+                <p>Posted ${escapeHtml(posted)} · ${applicants} applicant${applicants === 1 ? '' : 's'} so far</p>
+              </div>
+              <div class="row">
+                <a class="btn btn-outline" href="/jobs/browse.html">${icon('search', 'icon-sm')} Browse jobs</a>
+              </div>
+            </div>
+
+            <div class="job-detail-layout">
+              <div class="job-detail-main">
+                <section class="panel">
+                  <div class="panel-head">
+                    <h2>Project overview</h2>
+                    <span class="hint">${escapeHtml(job.estimated_duration || 'Flexible timeline')}</span>
+                  </div>
+                  <div class="panel-body">
+                    <p class="job-description">${escapeHtml(job.description || 'No description provided.')}</p>
+                    <div class="job-summary-strip">
+                      <div class="job-summary-item">
+                        <span>Budget</span>
+                        <strong>${escapeHtml(budgetText(job))}</strong>
+                      </div>
+                      <div class="job-summary-item">
+                        <span>Deadline</span>
+                        <strong>${escapeHtml(deadline)}</strong>
+                      </div>
+                      <div class="job-summary-item">
+                        <span>Experience</span>
+                        <strong>${escapeHtml(experienceText(job.experience_level))}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                ${job.scope ? `
+                  <section class="panel">
+                    <div class="panel-head"><h2>Scope of work</h2></div>
+                    <div class="panel-body">
+                      <p class="job-description">${escapeHtml(job.scope)}</p>
+                    </div>
+                  </section>` : ''}
+
+                <section class="panel">
+                  <div class="panel-head"><h2>Requirements &amp; deliverables</h2></div>
+                  <div class="panel-body">
+                    <div class="form-grid">
+                      <div>
+                        <h3 class="form-section-title mb-3">${icon('award', 'icon-sm')} Required skills</h3>
+                        ${skills.length
+                          ? `<div class="tag-row">${skills.map((skill) => `<span class="tag blue">${escapeHtml(skill)}</span>`).join('')}</div>`
+                          : '<p class="hint">No specific skills listed. Highlight your relevant tax and finance experience in your cover letter.</p>'}
+                      </div>
+                      <div>
+                        <h3 class="form-section-title mb-3">${icon('checkCircle', 'icon-sm')} Deliverables</h3>
+                        ${deliverables.length
+                          ? `<ul class="job-list">${deliverables.map((item) => `<li>${icon('check', 'icon-sm')}<span>${escapeHtml(item)}</span></li>`).join('')}</ul>`
+                          : '<p class="hint">Deliverables will be agreed with the selected professional.</p>'}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="panel">
+                  <div class="panel-head"><h2>About the job poster</h2></div>
+                  <div class="panel-body">
+                    ${renderPoster(job)}
+                  </div>
+                </section>
+              </div>
+
+              <aside class="job-detail-side">
+                <div class="panel job-side-card">
+                  <div class="row-between">
+                    <h2>Project summary</h2>
+                    ${statusBadge(job.status)}
+                  </div>
+                  <div class="job-budget">${escapeHtml(budgetText(job))} <small>${escapeHtml(budgetTypeText(job))}</small></div>
+                  <div class="job-meta-grid">
+                    <div class="job-meta-item">
+                      <span>${icon('calendar', 'icon-sm')} Deadline</span>
+                      <strong>${escapeHtml(deadline)}</strong>
+                    </div>
+                    <div class="job-meta-item">
+                      <span>${icon('clock', 'icon-sm')} Duration</span>
+                      <strong>${escapeHtml(job.estimated_duration || 'Flexible')}</strong>
+                    </div>
+                    <div class="job-meta-item">
+                      <span>${icon('user', 'icon-sm')} Applicants</span>
+                      <strong>${applicants}</strong>
+                    </div>
+                    <div class="job-meta-item">
+                      <span>${icon('award', 'icon-sm')} Experience</span>
+                      <strong>${escapeHtml(experienceText(job.experience_level))}</strong>
+                    </div>
+                  </div>
+                  <hr class="divider">
+                  <div id="applyPanel">${renderApplyPanel(job)}</div>
+                </div>
+              </aside>
+            </div>`;
+
+          bindApplyForm();
+        }
+
+        function setFieldError(id, message) {
+          const field = document.getElementById(id);
+          if (!field) return;
+          field.textContent = message || '';
+          field.hidden = !message;
+        }
+
+        function validateApply(data) {
+          let valid = true;
+          setFieldError('bidError', '');
+          setFieldError('timelineError', '');
+          setFieldError('coverError', '');
+          setFieldError('portfolioError', '');
+
+          if (!Number.isFinite(data.bid_amount) || data.bid_amount <= 0) {
+            setFieldError('bidError', 'Enter a bid greater than zero.');
+            valid = false;
+          }
+          if (!data.proposed_timeline) {
+            setFieldError('timelineError', 'Tell the client when you can complete the work.');
+            valid = false;
+          }
+          if (!data.cover_letter || data.cover_letter.length < 40) {
+            setFieldError('coverError', 'Cover letter must be at least 40 characters.');
+            valid = false;
+          }
+          if (data.portfolio_url && !safeUrl(data.portfolio_url)) {
+            setFieldError('portfolioError', 'Enter a valid http or https URL.');
+            valid = false;
+          }
+          return valid;
+        }
+
+        function bindApplyForm() {
+          const form = document.getElementById('applyForm');
+          if (!form) return;
+
+          const coverLetter = document.getElementById('coverLetter');
+          const coverCount = document.getElementById('coverCount');
+          coverLetter.addEventListener('input', () => {
+            coverCount.textContent = `${coverLetter.value.length} / 3000`;
+          });
+
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const button = document.getElementById('applyButton');
+            const data = {
+              bid_amount: Number(document.getElementById('bidAmount').value),
+              proposed_timeline: document.getElementById('proposedTimeline').value.trim(),
+              cover_letter: coverLetter.value.trim(),
+              portfolio_url: document.getElementById('portfolioUrl').value.trim()
+            };
+
+            if (!validateApply(data)) return;
+
+            setButtonLoading(button, true);
+            try {
+              await api(`/jobs/${jobId}/apply`, { method: 'POST', body: data });
+              showToast('Application submitted successfully.', 'success');
+              const success = document.getElementById('applySuccess');
+              form.hidden = true;
+              success.hidden = false;
+              success.innerHTML = `
+                <div class="alert alert-success">
+                  ${icon('checkCircle')}
+                  <div>
+                    <strong>Your bid has been sent.</strong>
+                    <div class="small">The job poster can now review your application and contact you through the marketplace.</div>
+                  </div>
+                </div>
+                <a class="btn btn-outline btn-block mt-3" href="/jobs/browse.html">Browse more jobs</a>`;
+              const count = document.querySelector('.job-detail-side .job-meta-grid .job-meta-item:nth-child(3) strong');
+              if (count) count.textContent = String(Number(count.textContent || 0) + 1);
+            } catch (error) {
+              if (error.status === 401) {
+                redirectToLogin();
+                return;
+              }
+              showToast(error.message || 'Could not submit your application.', 'error');
+            } finally {
+              setButtonLoading(button, false);
+            }
+          });
+        }
+
+        async function load() {
+          if (!validJobId()) {
+            errorPage('Job not found', 'The job link is missing a valid job ID. Please choose a job from the marketplace.');
+            return;
+          }
+
+          try {
+            const [user, job] = await Promise.all([
+              getCurrentUser().catch(() => null),
+              api(`/jobs/${jobId}`)
+            ]);
+            state.user = user;
+            state.job = job;
+            await enrichPoster(job);
+            render();
+          } catch (error) {
+            if (error.status === 404) {
+              errorPage('Job not found', 'This job may have been removed or closed. Browse other open projects on the marketplace.');
+              return;
+            }
+            errorPage('Unable to load this job', error.message || 'Please check your connection and try again.');
+          }
+        }
+
+        load();
+      });
+    })();
+  </script>
+</body>
+</html>

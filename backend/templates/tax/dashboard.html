@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tax Return Dashboard | TaxPilot</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tax.css">
+</head>
+<body class="tax-app">
+  <div id="taxNavRoot"></div>
+
+  <main class="tax-shell">
+    <div class="container">
+      <div class="d-flex flex-wrap justify-content-between align-items-end gap-3">
+        <div>
+          <div class="page-eyebrow">Tax Filing &amp; Optimization</div>
+          <h1 class="page-title">Tax Return Dashboard</h1>
+          <p class="page-subtitle mb-0" id="dashboardSubtitle">Track income, deductions, forms, and filing progress.</p>
+        </div>
+        <div class="d-flex gap-2 no-print">
+          <select class="form-select" id="returnSelect" style="min-width:220px" aria-label="Select tax return"></select>
+          <button class="btn btn-tax-soft" id="newReturnToggle" type="button">
+            <i class="bi bi-plus-lg me-1"></i> New Return
+          </button>
+        </div>
+      </div>
+
+      <div id="alertHost" class="mt-3"></div>
+
+      <section id="createPanel" class="card mt-4 d-none no-print">
+        <div class="card-header d-flex align-items-center gap-2">
+          <i class="bi bi-file-earmark-plus text-primary"></i> Create a tax return
+        </div>
+        <div class="card-body">
+          <form id="createReturnForm" class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label" for="newYear">Tax year</label>
+              <input class="form-control" id="newYear" type="number" min="2000" max="2100" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="newFilingStatus">Filing status</label>
+              <select class="form-select" id="newFilingStatus"></select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="newEntityType">Entity type</label>
+              <select class="form-select" id="newEntityType"></select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label" for="newState">State</label>
+              <select class="form-select" id="newState"></select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="newW2">W-2 wages</label>
+              <input class="form-control" id="newW2" type="number" min="0" step="0.01" value="0">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="newSe">Self-employment income</label>
+              <input class="form-control" id="newSe" type="number" min="0" step="0.01" value="0">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label" for="newWithholding">Federal withholding</label>
+              <input class="form-control" id="newWithholding" type="number" min="0" step="0.01" value="0">
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <button class="btn btn-tax-primary w-100" type="submit">
+                <i class="bi bi-check2-circle me-1"></i> Create return
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <div id="dashboardContent" class="mt-4">
+        <div class="card"><div class="card-body"><span class="loading-inline"><span class="spinner-border spinner-border-sm"></span> Loading your returns...</span></div></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/js/tax.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      const T = window.Tax;
+      T.mountNav('dashboard');
+      document.getElementById('newYear').value = T.defaultTaxYear();
+      document.getElementById('newFilingStatus').innerHTML = T.filingStatusOptions('single');
+      document.getElementById('newEntityType').innerHTML = T.entityOptions('sole_proprietor');
+      document.getElementById('newState').innerHTML = T.stateOptions('');
+      document.getElementById('newReturnToggle').addEventListener('click', () => {
+        document.getElementById('createPanel').classList.toggle('d-none');
+      });
+
+      await T.requireAuth();
+      let returns = [];
+      let activeId = T.queryParam('return_id');
+
+      async function load() {
+        try {
+          returns = await T.getReturns();
+          const select = document.getElementById('returnSelect');
+          if (!returns.length) {
+            select.innerHTML = '<option value="">No returns yet</option>';
+            document.getElementById('createPanel').classList.remove('d-none');
+            renderEmpty();
+            return;
+          }
+          if (!activeId || !returns.some((r) => String(r.id) === String(activeId))) {
+            activeId = String(returns[0].id);
+            const url = new URL(window.location.href);
+            url.searchParams.set('return_id', activeId);
+            history.replaceState({}, '', url);
+          }
+          select.innerHTML = returns.map((r) =>
+            `<option value="${r.id}" ${String(r.id) === String(activeId) ? 'selected' : ''}>${r.tax_year} · ${T.escapeHtml(r.filing_status_label)} · ${T.escapeHtml(r.entity_type.replace(/_/g, ' '))}</option>`
+          ).join('');
+          select.onchange = () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('return_id', select.value);
+            window.location.href = url.toString();
+          };
+          await renderReturn(activeId);
+        } catch (error) {
+          document.getElementById('dashboardContent').innerHTML = errorCard(error.message);
+        }
+      }
+
+      function errorCard(message) {
+        return `<div class="card border-danger-subtle"><div class="card-body text-danger"><i class="bi bi-exclamation-triangle me-2"></i>${T.escapeHtml(message)}</div></div>`;
+      }
+
+      function renderEmpty() {
+        document.getElementById('dashboardContent').innerHTML = `
+          <div class="card">
+            <div class="card-body empty-state">
+              <div class="icon"><i class="bi bi-journal-text"></i></div>
+              <h5 class="mb-1">Start your first tax return</h5>
+              <p class="mb-3">Create a return for the year, then add deductions and generate forms.</p>
+              <button class="btn btn-tax-primary" onclick="document.getElementById('newYear').focus()">Create a return above</button>
+            </div>
+          </div>`;
+      }
+
+      async function renderReturn(id) {
+        const data = await T.getReturn(id);
+        const calc = data.calculation || {};
+        const refund = Number(data.refund_or_owed || 0);
+        const progress = data.progress || {};
+        const forms = data.forms || [];
+        const deductions = data.deductions || [];
+        const byCategory = deductions.reduce((acc, d) => {
+          acc[d.category] = (acc[d.category] || 0) + Number(d.amount || 0);
+          return acc;
+        }, {});
+        const subtitle = `${data.filing_status_label} · ${String(data.entity_type).replace(/_/g, ' ')}${data.state ? ' · ' + data.state : ''}`;
+        document.getElementById('dashboardSubtitle').textContent = subtitle;
+
+        document.getElementById('dashboardContent').innerHTML = `
+          <div class="row g-3">
+            <div class="col-6 col-xl-3">
+              <div class="stat-card blue">
+                <div class="label"><i class="bi bi-graph-up-arrow"></i> Total income</div>
+                <div class="value">${T.money(data.total_income)}</div>
+                <div class="hint">AGI ${T.money(calc.agi)}</div>
+              </div>
+            </div>
+            <div class="col-6 col-xl-3">
+              <div class="stat-card green">
+                <div class="label"><i class="bi bi-receipt-cutoff"></i> Deductions</div>
+                <div class="value">${T.money(data.total_deductions)}</div>
+                <div class="hint">${deductions.length} claimed · ${T.money(byCategory.home_office || 0)} home office</div>
+              </div>
+            </div>
+            <div class="col-6 col-xl-3">
+              <div class="stat-card">
+                <div class="label"><i class="bi bi-calculator"></i> Estimated tax</div>
+                <div class="value">${T.money(data.estimated_tax)}</div>
+                <div class="hint">Taxable income ${T.money(data.taxable_income)}</div>
+              </div>
+            </div>
+            <div class="col-6 col-xl-3">
+              <div class="stat-card ${refund >= 0 ? 'green' : 'red'}">
+                <div class="label"><i class="bi bi-wallet2"></i> ${refund >= 0 ? 'Refund' : 'Amount owed'}</div>
+                <div class="value">${T.money(Math.abs(refund))}</div>
+                <div class="hint">Payments ${T.money(data.total_payments)}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-4 mt-1">
+            <div class="col-lg-8">
+              <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                  <span><i class="bi bi-activity me-2 text-primary"></i>Return progress</span>
+                  ${T.statusBadge(data.status)}
+                </div>
+                <div class="card-body">
+                  <div class="d-flex justify-content-between small mb-2">
+                    <span class="text-secondary">${progress.completed_forms || 0} of ${progress.total_forms || 0} forms complete</span>
+                    <strong>${progress.percent_complete || 0}%</strong>
+                  </div>
+                  <div class="progress progress-thin mb-4"><div class="progress-bar" style="width:${progress.percent_complete || 0}%"></div></div>
+                  <div class="timeline">
+                    <div class="timeline-item done"><div class="t">Return created</div><div class="d">${T.formatDate(data.created_at)}</div></div>
+                    <div class="timeline-item ${deductions.length ? 'done' : 'current'}"><div class="t">Add income &amp; deductions</div><div class="d">${deductions.length ? deductions.length + ' deductions claimed' : 'No deductions claimed yet'}</div></div>
+                    <div class="timeline-item ${forms.length ? 'done' : ''}"><div class="t">Generate tax forms</div><div class="d">${forms.length ? forms.length + ' forms generated' : 'Forms not generated yet'}</div></div>
+                    <div class="timeline-item ${data.status === 'filed' || data.status === 'accepted' ? 'done' : ''}"><div class="t">File return</div><div class="d">${data.filed_at ? 'Filed ' + T.formatDate(data.filed_at) : 'Not filed'}</div></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card mt-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                  <span><i class="bi bi-file-earmark-text me-2 text-primary"></i>Generated forms</span>
+                  <a class="btn btn-sm btn-tax-soft" href="${T.withReturn('/tax/forms-viewer.html')}">Open viewer</a>
+                </div>
+                <div class="card-body p-0">
+                  ${forms.length ? `<div class="table-responsive"><table class="table table-tax mb-0">
+                    <thead><tr><th>Form</th><th>Type</th><th>Generated</th><th></th></tr></thead>
+                    <tbody>${forms.map((f) => `<tr>
+                      <td class="fw-semibold">${T.escapeHtml(f.form_name)}</td>
+                      <td><span class="pill pill-info">${T.escapeHtml(f.form_type)}</span></td>
+                      <td class="text-secondary">${T.formatDate(f.generated_at)}</td>
+                      <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="${T.withReturn('/tax/forms-viewer.html')}&form_id=${f.id}">View</a></td>
+                    </tr>`).join('')}</tbody>
+                  </table></div>` : `<div class="empty-state py-4"><i class="bi bi-file-earmark-x"></i><div>No forms generated yet.</div></div>`}
+                </div>
+              </div>
+            </div>
+
+            <div class="col-lg-4">
+              <div class="card">
+                <div class="card-header"><i class="bi bi-lightning-charge me-2 text-primary"></i>Quick actions</div>
+                <div class="card-body d-grid gap-2">
+                  <a class="quick-action" href="${T.withReturn('/tax/deduction-questionnaire.html')}">
+                    <span class="qa-icon"><i class="bi bi-search"></i></span>
+                    <span><span class="qa-title">Find missed deductions</span><br><span class="qa-sub">Smart IRS interview</span></span>
+                  </a>
+                  <button class="quick-action" id="generateFormsBtn" type="button">
+                    <span class="qa-icon"><i class="bi bi-file-earmark-plus"></i></span>
+                    <span><span class="qa-title">Generate forms</span><br><span class="qa-sub">1040, Schedule C &amp; SE</span></span>
+                  </button>
+                  <a class="quick-action" href="/tax/entity-comparison.html">
+                    <span class="qa-icon"><i class="bi bi-diagram-3"></i></span>
+                    <span><span class="qa-title">Compare entity types</span><br><span class="qa-sub">S-Corp vs LLC vs C-Corp</span></span>
+                  </a>
+                  <a class="quick-action" href="${T.withReturn('/tax/estimated-taxes.html')}">
+                    <span class="qa-icon"><i class="bi bi-calendar-check"></i></span>
+                    <span><span class="qa-title">Quarterly estimated taxes</span><br><span class="qa-sub">Form 1040-ES schedule</span></span>
+                  </a>
+                  <a class="quick-action" href="${T.withReturn('/tax/audit-docs.html')}">
+                    <span class="qa-icon"><i class="bi bi-shield-check"></i></span>
+                    <span><span class="qa-title">Audit defense center</span><br><span class="qa-sub">Upload receipts &amp; coverage</span></span>
+                  </a>
+                </div>
+              </div>
+
+              <div class="card mt-4">
+                <div class="card-header"><i class="bi bi-tags me-2 text-primary"></i>Deductions by category</div>
+                <div class="card-body">
+                  ${Object.keys(byCategory).length ? Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([cat, amt]) => `
+                    <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+                      <span class="text-capitalize small">${T.escapeHtml(cat.replace(/_/g, ' '))}</span>
+                      <strong class="small">${T.money(amt)}</strong>
+                    </div>`).join('') : '<div class="text-secondary small">No deductions yet. Run the smart interview to find eligible expenses.</div>'}
+                </div>
+              </div>
+
+              <div class="card mt-4">
+                <div class="card-header"><i class="bi bi-info-circle me-2 text-primary"></i>Filing details</div>
+                <div class="card-body small">
+                  <div class="d-flex justify-content-between py-1"><span class="text-secondary">Tax year</span><strong>${data.tax_year}</strong></div>
+                  <div class="d-flex justify-content-between py-1"><span class="text-secondary">Entity</span><strong class="text-capitalize">${T.escapeHtml(String(data.entity_type).replace(/_/g, ' '))}</strong></div>
+                  <div class="d-flex justify-content-between py-1"><span class="text-secondary">Self-employment</span><strong>${T.money((calc.business_income || {}).net_profit)}</strong></div>
+                  <div class="d-flex justify-content-between py-1"><span class="text-secondary">Effective tax rate</span><strong>${calc.agi ? T.pct((calc.tax.total_tax / calc.agi) * 100) : '0%'}</strong></div>
+                  <div class="d-flex justify-content-between py-1"><span class="text-secondary">Status</span>${T.statusBadge(data.status)}</div>
+                </div>
+              </div>
+
+              <div class="disclaimer-box mt-4">
+                Figures are planning estimates. Review every form with a qualified tax professional before filing.
+              </div>
+            </div>
+          </div>`;
+
+        document.getElementById('generateFormsBtn').addEventListener('click', async (event) => {
+          const button = event.currentTarget;
+          T.setLoading(button, true, 'Generating...');
+          try {
+            const result = await T.api('/forms/generate', { method: 'POST', body: { tax_return_id: Number(id), include_1040es: false } });
+            T.toast(`${result.count} forms generated`, 'success');
+            await renderReturn(id);
+          } catch (error) {
+            T.toast(error.message, 'error');
+          } finally {
+            T.setLoading(button, false);
+          }
+        });
+      }
+
+      document.getElementById('createReturnForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const button = event.target.querySelector('button[type="submit"]');
+        T.setLoading(button, true, 'Creating...');
+        try {
+          const payload = {
+            tax_year: Number(document.getElementById('newYear').value),
+            filing_status: document.getElementById('newFilingStatus').value,
+            entity_type: document.getElementById('newEntityType').value,
+            state: document.getElementById('newState').value || null,
+            w2_wages: Number(document.getElementById('newW2').value || 0),
+            self_employment_income: Number(document.getElementById('newSe').value || 0),
+            federal_withholding: Number(document.getElementById('newWithholding').value || 0),
+          };
+          const created = await T.api('/returns/new', { method: 'POST', body: payload });
+          T.toast('Tax return created', 'success');
+          const url = new URL(window.location.href);
+          url.searchParams.set('return_id', created.id);
+          window.location.href = url.toString();
+        } catch (error) {
+          T.toast(error.message, 'error');
+          T.setLoading(button, false);
+        }
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>

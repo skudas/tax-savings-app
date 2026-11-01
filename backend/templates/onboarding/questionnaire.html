@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}S-Corp Savings Calculator - Tax Savings MVP{% endblock %}
+
+{% block content %}
+<h1>S-Corp Savings Estimator</h1>
+
+<p>Answer a few questions about your business to get an instant estimate of your potential annual tax savings.</p>
+
+<form onsubmit="handleOnboarding(event)">
+    <div class="form-group">
+        <label for="profit">Annual Net Profit ($)</label>
+        <input type="number" id="profit" name="profit" min="1000" step="1000" required
+               placeholder="e.g., 100000">
+        <small>Your business profit before self-employment taxes</small>
+    </div>
+
+    <div class="form-group">
+        <label for="entity_type">Current Business Entity Type</label>
+        <select id="entity_type" name="entity_type" required>
+            <option value="">-- Select --</option>
+            <option value="sole_proprietor">Sole Proprietor</option>
+            <option value="llc">LLC (Single-Member)</option>
+            <option value="other">Other</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="state">State</label>
+        <input type="text" id="state" name="state" placeholder="CA" maxlength="2" required>
+        <small>2-letter state code (for future state-specific considerations)</small>
+    </div>
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" id="payroll" name="payroll">
+            Do you already use a payroll provider?
+        </label>
+        <small>Check if you're already paying employees or have payroll setup</small>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Calculate Savings</button>
+</form>
+
+<div id="results" style="display: none; margin-top: 2rem;"></div>
+
+<div class="alert alert-info" style="margin-top: 2rem;">
+    <h4>How it Works</h4>
+    <p>
+        An S-Corporation allows you to reduce self-employment tax by:
+    </p>
+    <ol>
+        <li>Paying yourself a "reasonable salary" as W-2 wages (subject to SE tax)</li>
+        <li>Taking the remaining profit as dividends (NOT subject to SE tax)</li>
+    </ol>
+    <p>
+        This can save you 15.3% self-employment tax on the dividend portion,
+        though S-Corp setup and administration costs must be factored in.
+    </p>
+</div>
+{% endblock %}

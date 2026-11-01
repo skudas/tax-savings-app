@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Message your tax professional securely. Ask questions, share context, and prepare for your consultation.">
+  <title>Messages | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <main id="messagesRoot">
+    <div class="container messages-page">
+      <div class="loading-block" style="padding-top:4rem"><div class="spinner"></div><span>Loading your messages...</span></div>
+    </div>
+  </main>
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('messages');
+      renderFooter();
+
+      const root = document.getElementById('messagesRoot');
+      let currentUser = null;
+      let conversations = [];
+      let thread = [];
+      let threadError = null;
+      let convError = null;
+      let loadingThread = false;
+      let sending = false;
+      let search = '';
+      let threadTimer = null;
+      let convTimer = null;
+
+      const initialUser = queryParam('user_id');
+      let activeUserId = initialUser && Number.isFinite(Number(initialUser)) && Number(initialUser) > 0
+        ? Number(initialUser)
+        : null;
+      let activeName = queryParam('name') || '';
+
+      const shellMarkup = () => `
+        <div class="container messages-page">
+          <div class="messages-shell ${activeUserId ? 'chat-open' : ''}" id="messagesShell">
+            <aside class="conv-sidebar" aria-label="Conversations">
+              <div class="conv-header">
+                <div>
+                  <span class="eyebrow">Inbox</span>
+                  <h1>Messages</h1>
+                </div>
+                <a class="btn btn-outline btn-sm" href="/marketplace/browse.html">${icon('plus', 'icon-sm')} New</a>
+              </div>
+              <div class="conv-search">
+                <input class="input" id="convSearch" type="search" placeholder="Search conversations" aria-label="Search conversations">
+              </div>
+              <div class="conv-scroll" id="convList"></div>
+            </aside>
+            <section class="chat-panel" id="chatPanel" aria-label="Conversation"></section>
+          </div>
+        </div>`;
+
+      function conversationLink(conv) {
+        return `/messages.html?user_id=${encodeURIComponent(conv.user_id)}&name=${encodeURIComponent(conv.user_name || '')}`;
+      }
+
+      function dayLabel(value) {
+        const date = parseDate(value);
+        if (!date) return '';
+        const today = new Date();
+        const yesterday = new Date();
+        yesterday.setDate(today.getDate() - 1);
+        if (dateKey(date) === dateKey(today)) return 'Today';
+        if (dateKey(date) === dateKey(yesterday)) return 'Yesterday';
+        return formatDate(date, { year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+      }
+
+      function renderConvList() {
+        const container = document.getElementById('convList');
+        if (!container) return;
+
+        if (convError) {
+          container.innerHTML = `<div style="padding:1rem">${errorState(convError, 'retryConversations')}</div>`;
+          const retry = document.getElementById('retryConversations');
+          if (retry) retry.addEventListener('click', () => loadConversations());
+          return;
+        }
+
+        const items = conversations.slice();
+        if (activeUserId && !items.some((conv) => Number(conv.user_id) === Number(activeUserId))) {
+          items.unshift({
+            user_id: activeUserId,
+            user_name: activeName || 'New conversation',
+            last_message: '',
+            last_message_at: null,
+            unread_count: 0
+          });
+        }
+
+        const filtered = search
+          ? items.filter((conv) => `${conv.user_name || ''} ${conv.last_message || ''}`.toLowerCase().includes(search))
+          : items;
+
+        if (!filtered.length) {
+          container.innerHTML = `
+            <div class="empty-state" style="border:0;background:transparent;padding:2.5rem 1.25rem">
+              <div class="icon-box">${icon(search ? 'search' : 'message', 'icon-lg')}</div>
+              <h3>${search ? 'No matches' : 'No conversations yet'}</h3>
+              <p>${search ? 'Try a different name or keyword.' : 'Message a tax professional and your conversations will appear here.'}</p>
+              ${search ? '' : `<a class="btn btn-primary btn-sm" href="/marketplace/browse.html">Find an expert</a>`}
+            </div>`;
+          return;
+        }
+
+        container.innerHTML = filtered.map((conv) => `
+          <button class="conv-item ${Number(conv.user_id) === Number(activeUserId) ? 'active' : ''}" type="button"
+            data-user-id="${conv.user_id}" data-name="${escapeHtml(conv.user_name || '')}"
+            aria-current="${Number(conv.user_id) === Number(activeUserId) ? 'true' : 'false'}">
+            ${avatar(conv.user_name || 'Conversation', 'avatar-sm')}
+            <div class="conv-item-main">
+              <div class="conv-item-top">
+                <strong>${escapeHtml(conv.user_name || 'Conversation')}</strong>
+                <span>${conv.last_message_at ? timeAgo(conv.last_message_at) : ''}</span>
+              </div>
+              <p>${escapeHtml(conv.last_message || 'Start the conversation')}</p>
+            </div>
+            ${conv.unread_count ? `<span class="unread-pill">${conv.unread_count}</span>` : ''}
+          </button>`).join('');
+      }
+
+      function renderThread() {
+        const body = document.getElementById('chatBody');
+        if (!body) return;
+
+        if (threadError) {
+          body.innerHTML = `<div style="padding:1rem">${errorState(threadError, 'retryThread')}</div>`;
+          const retry = document.getElementById('retryThread');
+          if (retry) retry.addEventListener('click', () => loadThread());
+          return;
+        }
+
+        if (loadingThread && !thread.length) {
+          body.innerHTML = spinnerBlock('Loading conversation...');
+          return;
+        }
+
+        if (!thread.length) {
+          body.innerHTML = `
+            <div class="chat-empty">
+              <div class="icon-box">${icon('message', 'icon-lg')}</div>
+              <h2>Start the conversation</h2>
+              <p>Ask about your tax situation, share documents, or prepare questions for your consultation. Your messages are private.</p>
+            </div>`;
+          return;
+        }
+
+        let lastDay = '';
+        body.innerHTML = thread.map((message) => {
+          const mine = Number(message.sender_id) === Number(currentUser.id);
+          const key = dateKey(message.created_at);
+          let markup = '';
+          if (key !== lastDay) {
+            lastDay = key;
+            markup += `<div class="chat-day">${escapeHtml(dayLabel(message.created_at))}</div>`;
+          }
+          markup += `
+            <div class="msg-row ${mine ? 'mine' : ''}">
+              ${mine ? '' : avatar(message.sender_name || 'Them', 'avatar-sm')}
+              <div>
+                <div class="bubble">${escapeHtml(message.content)}</div>
+                <div class="msg-time">${formatTime(message.created_at)}${mine ? (message.is_read ? ' · Read' : ' · Sent') : ''}</div>
+              </div>
+            </div>`;
+          return markup;
+        }).join('');
+      }
+
+      function renderChat() {
+        const panel = document.getElementById('chatPanel');
+        if (!panel) return;
+
+        if (!activeUserId) {
+          panel.innerHTML = `
+            <div class="chat-empty">
+              <div class="icon-box">${icon('message', 'icon-lg')}</div>
+              <h2>Your messages</h2>
+              <p>Select a conversation on the left, or message a tax professional from their profile to start planning.</p>
+              <a class="btn btn-primary" href="/marketplace/browse.html">${icon('search', 'icon-sm')} Find an expert</a>
+            </div>`;
+          return;
+        }
+
+        panel.innerHTML = `
+          <div class="chat-active">
+            <div class="chat-header">
+              <button class="chat-back" id="chatBack" type="button" aria-label="Back to conversations">${icon('arrowLeft')}</button>
+              ${avatar(activeName || 'Conversation', 'avatar-sm')}
+              <div class="chat-header-main">
+                <strong>${escapeHtml(activeName || 'Conversation')}</strong>
+                <span><span class="online-dot"></span> Private conversation</span>
+              </div>
+            </div>
+            <div class="chat-body" id="chatBody"></div>
+            <form class="chat-composer" id="chatForm">
+              <textarea id="chatInput" rows="1" placeholder="Write a message..." aria-label="Write a message"></textarea>
+              <button class="btn btn-primary" type="submit" id="chatSend">${icon('send', 'icon-sm')} Send</button>
+            </form>
+          </div>`;
+
+        const back = document.getElementById('chatBack');
+        if (back) back.addEventListener('click', goBackToList);
+        bindComposer();
+        renderThread();
+      }
+
+      function autoGrow(textarea) {
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+      }
+
+      function bindComposer() {
+        const form = document.getElementById('chatForm');
+        const input = document.getElementById('chatInput');
+        if (!form || !input) return;
+
+        input.addEventListener('input', () => autoGrow(input));
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            form.requestSubmit();
+          }
+        });
+        form.addEventListener('submit', (event) => {
+          event.preventDefault();
+          sendMessage();
+        });
+      }
+
+      async function sendMessage() {
+        const input = document.getElementById('chatInput');
+        const button = document.getElementById('chatSend');
+        if (!input || !activeUserId || sending) return;
+
+        const content = input.value.trim();
+        if (!content) {
+          input.focus();
+          return;
+        }
+
+        sending = true;
+        setButtonLoading(button, true);
+        try {
+          await api('/messages/', {
+            method: 'POST',
+            body: { recipient_id: activeUserId, content }
+          });
+          input.value = '';
+          autoGrow(input);
+          await loadThread({ silent: true, forceScroll: true });
+          await loadConversations({ silent: true });
+          input.focus();
+        } catch (error) {
+          showToast(error.message || 'Your message could not be sent.', 'error');
+        } finally {
+          sending = false;
+          setButtonLoading(button, false);
+        }
+      }
+
+      async function loadConversations({ silent = false } = {}) {
+        try {
+          const data = await api('/messages/conversations');
+          conversations = Array.isArray(data) ? data : [];
+          convError = null;
+        } catch (error) {
+          conversations = [];
+          convError = error.message || 'Conversations could not be loaded.';
+          if (!silent) showToast(convError, 'error');
+        }
+        renderConvList();
+      }
+
+      async function loadThread({ silent = false, forceScroll = false } = {}) {
+        if (!activeUserId) return;
+        const userId = activeUserId;
+        const body = document.getElementById('chatBody');
+        const nearBottom = forceScroll || !body || (body.scrollHeight - body.scrollTop - body.clientHeight < 120);
+        const previousScroll = body ? body.scrollTop : 0;
+
+        if (!silent) {
+          loadingThread = true;
+          threadError = null;
+          thread = [];
+          renderThread();
+        }
+
+        try {
+          const data = await api(`/messages/with/${userId}?limit=100`);
+          if (userId !== activeUserId) return;
+          thread = Array.isArray(data) ? data : [];
+          threadError = null;
+          loadingThread = false;
+          renderThread();
+
+          const nextBody = document.getElementById('chatBody');
+          if (nextBody) {
+            if (nearBottom) {
+              scrollToBottom(nextBody);
+            } else {
+              nextBody.scrollTop = previousScroll;
+            }
+          }
+
+          if (!silent) await loadConversations({ silent: true });
+        } catch (error) {
+          if (userId !== activeUserId) return;
+          loadingThread = false;
+          if (silent) return;
+          threadError = error.message || 'Messages could not be loaded.';
+          renderThread();
+        }
+      }
+
+      function resolveActiveName() {
+        if (!activeUserId || activeName) return Promise.resolve();
+        const existing = conversations.find((conv) => Number(conv.user_id) === Number(activeUserId));
+        if (existing) {
+          activeName = existing.user_name || '';
+          return Promise.resolve();
+        }
+        return api('/professionals/search?limit=100')
+          .then((professionals) => {
+            const match = (Array.isArray(professionals) ? professionals : [])
+              .find((prof) => Number(prof.user_id) === Number(activeUserId));
+            if (match) activeName = match.user_name || '';
+          })
+          .catch(() => {})
+          .then(() => {
+            if (!activeName) activeName = 'New conversation';
+          });
+      }
+
+      function updateShellClass() {
+        const shell = document.getElementById('messagesShell');
+        if (shell) shell.classList.toggle('chat-open', Boolean(activeUserId));
+      }
+
+      function updateUrl() {
+        const url = new URL(window.location.href);
+        if (activeUserId) {
+          url.searchParams.set('user_id', activeUserId);
+          if (activeName) url.searchParams.set('name', activeName);
+        } else {
+          url.searchParams.delete('user_id');
+          url.searchParams.delete('name');
+        }
+        window.history.replaceState({}, '', url);
+      }
+
+      function selectConversation(userId, name) {
+        activeUserId = Number(userId);
+        activeName = name || activeName || 'Conversation';
+        thread = [];
+        threadError = null;
+        loadingThread = true;
+        updateShellClass();
+        updateUrl();
+        renderConvList();
+        renderChat();
+        loadThread();
+      }
+
+      function goBackToList() {
+        activeUserId = null;
+        activeName = '';
+        thread = [];
+        threadError = null;
+        updateShellClass();
+        updateUrl();
+        renderConvList();
+        renderChat();
+      }
+
+      function startPolling() {
+        stopPolling();
+        threadTimer = setInterval(() => {
+          if (!document.hidden && activeUserId) loadThread({ silent: true });
+        }, 5000);
+        convTimer = setInterval(() => {
+          if (!document.hidden) loadConversations({ silent: true });
+        }, 12000);
+      }
+
+      function stopPolling() {
+        if (threadTimer) clearInterval(threadTimer);
+        if (convTimer) clearInterval(convTimer);
+        threadTimer = null;
+        convTimer = null;
+      }
+
+      function bindShellEvents() {
+        const list = document.getElementById('convList');
+        if (list) {
+          list.addEventListener('click', (event) => {
+            const item = event.target.closest('.conv-item');
+            if (!item) return;
+            selectConversation(item.dataset.userId, item.dataset.name);
+            if (window.innerWidth <= 900) {
+              const input = document.getElementById('chatInput');
+              if (input) input.focus();
+            }
+          });
+        }
+
+        const searchInput = document.getElementById('convSearch');
+        if (searchInput) {
+          searchInput.addEventListener('input', () => {
+            search = searchInput.value.trim().toLowerCase();
+            renderConvList();
+          });
+        }
+
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden && activeUserId) loadThread({ silent: true });
+        });
+        window.addEventListener('beforeunload', stopPolling);
+      }
+
+      async function init() {
+        try {
+          currentUser = await getCurrentUser();
+        } catch (error) {
+          currentUser = null;
+        }
+
+        if (!currentUser) {
+          renderAuthWall(root, {
+            title: 'Sign in to your messages',
+            message: 'Message tax professionals securely, share context before your consultation, and keep every conversation in one place.'
+          });
+          return;
+        }
+
+        if (activeUserId === Number(currentUser.id)) {
+          activeUserId = null;
+          activeName = '';
+        }
+
+        root.innerHTML = shellMarkup();
+        bindShellEvents();
+        renderChat();
+        await loadConversations();
+        await resolveActiveName();
+        renderConvList();
+        renderChat();
+        updateShellClass();
+        updateUrl();
+
+        if (activeUserId) await loadThread();
+        startPolling();
+      }
+
+      init();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Track your tax consultations, upcoming appointments, and messages in one secure place.">
+  <title>Client Dashboard | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="container">
+    <div id="dashboardRoot">
+      <div class="loading-block" style="padding-top:5rem">
+        <div class="spinner"></div>
+        <span>Loading your dashboard...</span>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('client');
+      renderFooter();
+
+      const root = document.getElementById('dashboardRoot');
+      const marketplaceUrl = '/marketplace/professional-list.html';
+      const messagesUrl = '/marketplace/messages.html';
+
+      let currentUser = null;
+      let bookings = [];
+      let conversations = [];
+      let errors = { bookings: null, messages: null };
+
+      function messagesLink(userId, name) {
+        if (!userId) return messagesUrl;
+        return `${messagesUrl}?user_id=${encodeURIComponent(userId)}&name=${encodeURIComponent(name || '')}`;
+      }
+
+      function safeMeetingUrl(value) {
+        if (!value) return '';
+        try {
+          const url = new URL(value);
+          return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+        } catch (error) {
+          return '';
+        }
+      }
+
+      function myBookings() {
+        return (bookings || []).filter((booking) => Number(booking.client_id) === Number(currentUser.id));
+      }
+
+      function unreadTotal() {
+        return (conversations || []).reduce((sum, conv) => sum + Number(conv.unread_count || 0), 0);
+      }
+
+      function upcomingBookings(list) {
+        return list
+          .filter(bookingIsUpcoming)
+          .slice()
+          .sort((a, b) => (parseDate(a.scheduled_at)?.getTime() || 0) - (parseDate(b.scheduled_at)?.getTime() || 0));
+      }
+
+      function skeleton() {
+        root.innerHTML = `
+          <div class="dashboard-head">
+            <div>
+              <div class="skeleton skeleton-line w-40" style="height:12px"></div>
+              <div class="skeleton skeleton-line w-60" style="height:34px;margin-top:.6rem"></div>
+              <div class="skeleton skeleton-line w-80"></div>
+            </div>
+          </div>
+          <div class="stat-grid">
+            ${Array.from({ length: 4 }).map(() => `
+              <div class="stat-card">
+                <div class="skeleton skeleton-avatar"></div>
+                <div style="flex:1">
+                  <div class="skeleton skeleton-line w-60"></div>
+                  <div class="skeleton skeleton-line w-40" style="margin:0"></div>
+                </div>
+              </div>`).join('')}
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div class="skeleton skeleton-line w-40" style="margin:0"></div></div>
+            <div class="panel-body">${spinnerBlock('Loading your consultations...')}</div>
+          </div>`;
+      }
+
+      function renderAuthWallMessage() {
+        renderAuthWall(root, {
+          title: 'Sign in to your client dashboard',
+          message: 'Track upcoming consultations, message your tax professional, and review past bookings from one secure place.'
+        });
+      }
+
+      function renderStats(list, upcoming) {
+        const completed = list.filter((booking) => String(booking.status).toLowerCase() === 'completed').length;
+        const invested = list
+          .filter((booking) => String(booking.status).toLowerCase() !== 'cancelled')
+          .reduce((sum, booking) => sum + Number(booking.total_price || 0), 0);
+        const unread = unreadTotal();
+
+        return `
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="icon-box">${icon('calendar', 'icon-lg')}</div>
+              <div class="stat-meta">
+                <span>Upcoming</span>
+                <strong>${upcoming.length}</strong>
+                <small>Appointment${upcoming.length === 1 ? '' : 's'} scheduled</small>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box green">${icon('checkCircle', 'icon-lg')}</div>
+              <div class="stat-meta">
+                <span>Completed</span>
+                <strong>${completed}</strong>
+                <small>Consultations finished</small>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box purple">${icon('dollar', 'icon-lg')}</div>
+              <div class="stat-meta">
+                <span>Total invested</span>
+                <strong>${money(invested)}</strong>
+                <small>Excludes cancelled bookings</small>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box amber">${icon('message', 'icon-lg')}</div>
+              <div class="stat-meta">
+                <span>Unread messages</span>
+                <strong>${unread}</strong>
+                <small>${unread ? 'Reply to your professionals' : 'You are all caught up'}</small>
+              </div>
+            </div>
+          </div>`;
+      }
+
+      function renderAppointment(booking) {
+        const date = parseDate(booking.scheduled_at) || new Date();
+        const professional = booking.professional_name || 'Your professional';
+        const meeting = safeMeetingUrl(booking.meeting_link);
+
+        return `
+          <div class="appointment-card">
+            <div class="appt-date">
+              <span>${date.toLocaleDateString('en-US', { month: 'short' })}</span>
+              <strong>${date.getDate()}</strong>
+            </div>
+            <div class="appt-main">
+              <h3>${escapeHtml(booking.service_name || 'Consultation')} ${statusBadge(booking.status)}</h3>
+              <p>with ${escapeHtml(professional)}</p>
+              <div class="appt-meta">
+                <span>${icon('clock', 'icon-sm')} ${formatTime(booking.scheduled_at)} · ${durationLabel(booking.duration_minutes)}</span>
+                <span>${icon('calendar', 'icon-sm')} ${formatDate(booking.scheduled_at)}</span>
+              </div>
+            </div>
+            <div class="appt-side">
+              <div class="price"><span>Total</span><strong>${money(booking.total_price, 2)}</strong></div>
+              <div class="appt-actions">
+                <a class="btn btn-outline btn-sm" href="${messagesLink(booking.professional_id, professional)}">${icon('message', 'icon-sm')} Message</a>
+                ${meeting ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(meeting)}" target="_blank" rel="noopener noreferrer">${icon('video', 'icon-sm')} Join</a>` : ''}
+              </div>
+            </div>
+          </div>`;
+      }
+
+      function renderUpcoming(upcoming) {
+        if (errors.bookings) {
+          return `<div class="panel-body">${errorState(errors.bookings, 'retryBookings')}</div>`;
+        }
+        if (!upcoming.length) {
+          return `<div class="panel-body">
+            ${emptyState({
+              icon: 'calendar',
+              title: 'No upcoming consultations',
+              message: 'Browse vetted tax professionals and book a consultation that fits your schedule.',
+              action: { href: marketplaceUrl, label: 'Find a tax professional' }
+            })}
+          </div>`;
+        }
+        return `<div class="appointment-list">${upcoming.map(renderAppointment).join('')}</div>`;
+      }
+
+      function renderConsultationTable(list) {
+        if (errors.bookings) {
+          return `<div class="panel-body">${errorState(errors.bookings, 'retryBookingsTable')}</div>`;
+        }
+        if (!list.length) {
+          return `<div class="panel-body">
+            ${emptyState({
+              icon: 'file',
+              title: 'No consultations yet',
+              message: 'Your booked consultations will be listed here once you schedule your first appointment.',
+              action: { href: marketplaceUrl, label: 'Book a consultation' }
+            })}
+          </div>`;
+        }
+
+        const rows = list
+          .slice()
+          .sort((a, b) => (parseDate(b.scheduled_at)?.getTime() || 0) - (parseDate(a.scheduled_at)?.getTime() || 0));
+
+        return `
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Service</th>
+                  <th>Professional</th>
+                  <th>Duration</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map((booking) => `
+                  <tr>
+                    <td>
+                      <span class="strong">${formatDate(booking.scheduled_at)}</span><br>
+                      <span class="tiny muted">${formatTime(booking.scheduled_at)}</span>
+                    </td>
+                    <td>${escapeHtml(booking.service_name || 'Consultation')}</td>
+                    <td>${escapeHtml(booking.professional_name || '—')}</td>
+                    <td>${durationLabel(booking.duration_minutes)}</td>
+                    <td class="strong">${money(booking.total_price, 2)}</td>
+                    <td>${statusBadge(booking.status)}</td>
+                    <td class="text-right">
+                      <a class="btn btn-ghost btn-sm" href="${messagesLink(booking.professional_id, booking.professional_name)}">${icon('message', 'icon-sm')} Message</a>
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`;
+      }
+
+      function renderMessagesPreview() {
+        if (errors.messages) {
+          return `<div class="panel-body">${errorState(errors.messages, 'retryMessages')}</div>`;
+        }
+        if (!conversations.length) {
+          return `<div class="panel-body">
+            ${emptyState({
+              icon: 'message',
+              title: 'No conversations yet',
+              message: 'When you book or message a professional, your conversations will appear here.',
+              action: { href: marketplaceUrl, label: 'Find an expert' }
+            })}
+          </div>`;
+        }
+
+        const recent = conversations
+          .slice()
+          .sort((a, b) => (parseDate(b.last_message_at)?.getTime() || 0) - (parseDate(a.last_message_at)?.getTime() || 0))
+          .slice(0, 3);
+
+        return `
+          <div class="conv-list">
+            ${recent.map((conv) => `
+              <a class="conv-preview" href="${messagesLink(conv.user_id, conv.user_name)}">
+                ${avatar(conv.user_name, 'avatar-sm')}
+                <div class="conv-preview-main">
+                  <strong>${escapeHtml(conv.user_name)}</strong>
+                  <p>${escapeHtml(conv.last_message || 'Start the conversation')}</p>
+                </div>
+                <div class="conv-preview-side">
+                  <span>${conv.last_message_at ? timeAgo(conv.last_message_at) : ''}</span>
+                  ${conv.unread_count ? `<span class="unread-pill">${conv.unread_count}</span>` : ''}
+                </div>
+              </a>`).join('')}
+          </div>`;
+      }
+
+      function renderDashboard() {
+        const list = myBookings();
+        const upcoming = upcomingBookings(list);
+        const unread = unreadTotal();
+        const firstName = currentUser.first_name || 'there';
+
+        root.innerHTML = `
+          <div class="dashboard-head">
+            <div>
+              <span class="eyebrow">${icon('home', 'icon-sm')} Client dashboard</span>
+              <h1>Welcome back, ${escapeHtml(firstName)}</h1>
+              <p>Keep track of your consultations, messages, and tax planning history.</p>
+            </div>
+            <div class="row">
+              <a class="btn btn-outline" href="${messagesUrl}">
+                ${icon('message', 'icon-sm')} Messages
+                ${unread ? `<span class="unread-pill">${unread}</span>` : ''}
+              </a>
+              <a class="btn btn-primary" href="${marketplaceUrl}">
+                ${icon('plus', 'icon-sm')} Book new consultation
+              </a>
+            </div>
+          </div>
+
+          ${renderStats(list, upcoming)}
+
+          <div class="panel mb-5">
+            <div class="panel-head">
+              <div>
+                <h2>Upcoming appointments</h2>
+                <p class="small muted">Your next scheduled consultations</p>
+              </div>
+              <a class="btn btn-ghost btn-sm" href="#consultations">View all</a>
+            </div>
+            ${renderUpcoming(upcoming)}
+          </div>
+
+          <div class="panel mb-5" id="consultations">
+            <div class="panel-head">
+              <div>
+                <h2>Your consultations</h2>
+                <p class="small muted">Complete history of your booked appointments</p>
+              </div>
+              <span class="badge badge-primary">${list.length} total</span>
+            </div>
+            ${renderConsultationTable(list)}
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Messages</h2>
+                <p class="small muted">Recent conversations with your professionals</p>
+              </div>
+              <a class="btn btn-ghost btn-sm" href="${messagesUrl}">Open inbox ${unread ? `<span class="unread-pill">${unread}</span>` : ''}</a>
+            </div>
+            ${renderMessagesPreview()}
+          </div>
+
+          <div class="alert alert-info mt-4">
+            ${icon('info')}
+            <div class="small"><strong>Tip:</strong> Message your professional before the appointment to share documents or specific questions. Meeting links appear here once your booking is confirmed.</div>
+          </div>`;
+
+        bindEvents();
+      }
+
+      function bindEvents() {
+        root.querySelectorAll('#retryBookings, #retryBookingsTable, #retryMessages').forEach((button) => {
+          button.addEventListener('click', () => loadData(currentUser));
+        });
+      }
+
+      async function loadData(user) {
+        currentUser = user;
+        skeleton();
+
+        const results = await Promise.allSettled([
+          api('/consultations/my-bookings?limit=100'),
+          api('/messages/conversations')
+        ]);
+
+        if (results[0].status === 'fulfilled') {
+          bookings = Array.isArray(results[0].value) ? results[0].value : [];
+          errors.bookings = null;
+        } else {
+          bookings = [];
+          errors.bookings = results[0].reason?.message || 'Consultations could not be loaded.';
+        }
+
+        if (results[1].status === 'fulfilled') {
+          conversations = Array.isArray(results[1].value) ? results[1].value : [];
+          errors.messages = null;
+        } else {
+          conversations = [];
+          errors.messages = results[1].reason?.message || 'Messages could not be loaded.';
+        }
+
+        if (errors.bookings && errors.messages) {
+          root.innerHTML = `
+            <div class="dashboard-head">
+              <div>
+                <span class="eyebrow">Client dashboard</span>
+                <h1>Welcome back, ${escapeHtml(user.first_name || 'there')}</h1>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body">
+                <div class="empty-state" style="border:0">
+                  <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+                  <h3>We couldn't load your dashboard</h3>
+                  <p>${escapeHtml(errors.bookings)}</p>
+                  <button class="btn btn-primary" id="retryAll" type="button">Try again</button>
+                </div>
+              </div>
+            </div>`;
+          const retry = document.getElementById('retryAll');
+          if (retry) retry.addEventListener('click', () => loadData(currentUser));
+          return;
+        }
+
+        renderDashboard();
+      }
+
+      async function init() {
+        try {
+          const user = await getCurrentUser();
+          if (!user) {
+            renderAuthWallMessage();
+            return;
+          }
+          await loadData(user);
+        } catch (error) {
+          renderAuthWall(root, {
+            title: 'Sign in to view your dashboard',
+            message: 'We could not verify your session. Please sign in again to continue.'
+          });
+        }
+      }
+
+      init();
+    });
+  </script>
+</body>
+</html>

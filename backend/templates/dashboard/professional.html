@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Manage your professional profile, services, consultation calendar, and earnings.">
+  <title>Professional Dashboard | TaxSavings Marketplace</title>
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <main class="container">
+    <div id="professionalRoot">
+      <div class="loading-block" style="padding-top:5rem"><div class="spinner"></div><span>Loading your practice...</span></div>
+    </div>
+  </main>
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      renderHeader('professional');
+      renderFooter();
+
+      const root = document.getElementById('professionalRoot');
+      const state = {
+        user: null,
+        profile: null,
+        rateCards: [],
+        bookings: [],
+        earnings: null,
+        activeTab: 'overview',
+        bookingFilter: 'all',
+        calendarCursor: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+        selectedDay: dateKey(new Date()),
+        errors: {}
+      };
+
+      function messageLink(userId, name) {
+        return `/messages.html?user_id=${encodeURIComponent(userId)}&name=${encodeURIComponent(name || '')}`;
+      }
+
+      function safeMeetingUrl(value) {
+        if (!value) return '';
+        try {
+          const url = new URL(value);
+          return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+        } catch (error) {
+          return '';
+        }
+      }
+
+      function fullName(user) {
+        return `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email;
+      }
+
+      function profileBookings() {
+        return (state.bookings || [])
+          .filter((booking) => Number(booking.professional_id) === Number(state.user.id));
+      }
+
+      function getUpcoming() {
+        return profileBookings()
+          .filter(bookingIsUpcoming)
+          .slice()
+          .sort((a, b) => (parseDate(a.scheduled_at)?.getTime() || 0) - (parseDate(b.scheduled_at)?.getTime() || 0));
+      }
+
+      function getPending() {
+        return profileBookings().filter((booking) => String(booking.status).toLowerCase() === 'pending');
+      }
+
+      function totalEarnings() {
+        if (state.earnings && Number(state.earnings.total_earnings) > 0) return Number(state.earnings.total_earnings);
+        return profileBookings()
+          .filter((booking) => ['completed', 'confirmed'].includes(String(booking.status).toLowerCase()))
+          .reduce((sum, booking) => sum + Number(booking.total_price || 0), 0);
+      }
+
+      function availableBalance() {
+        if (state.earnings) return Number(state.earnings.current_balance || 0);
+        return profileBookings()
+          .filter((booking) => String(booking.status).toLowerCase() === 'completed')
+          .reduce((sum, booking) => sum + Number(booking.professional_receives || 0), 0);
+      }
+
+      function commissionsPaid() {
+        if (state.earnings) return Number(state.earnings.total_commissions_paid || 0);
+        return profileBookings()
+          .filter((booking) => ['completed', 'confirmed'].includes(String(booking.status).toLowerCase()))
+          .reduce((sum, booking) => sum + Number(booking.commission_amount || 0), 0);
+      }
+
+      function computeCompleteness() {
+        const profile = state.profile;
+        const checks = [
+          { label: 'Professional bio', done: Boolean(profile && profile.bio && profile.bio.trim().length > 20) },
+          { label: 'Specialties', done: Boolean(profile && Array.isArray(profile.specialties) && profile.specialties.length) },
+          { label: 'Certifications', done: Boolean(profile && Array.isArray(profile.certifications) && profile.certifications.length) },
+          { label: 'License number', done: Boolean(profile && profile.license_number) },
+          { label: 'At least one service', done: Boolean(state.rateCards && state.rateCards.length) },
+          { label: 'Verified by TaxSavings', done: Boolean(profile && profile.verified) }
+        ];
+        const score = Math.round((checks.filter((item) => item.done).length / checks.length) * 100);
+        return { checks, score };
+      }
+
+      function skeleton() {
+        root.innerHTML = `
+          <div class="dashboard-head">
+            <div>
+              <div class="skeleton skeleton-line w-40"></div>
+              <div class="skeleton skeleton-line w-60" style="height:34px;margin-top:.6rem"></div>
+            </div>
+          </div>
+          <div class="dashboard-layout">
+            <div class="dash-side"><div class="dash-profile"><div class="skeleton skeleton-avatar"></div><div class="skeleton skeleton-line w-60"></div></div></div>
+            <div class="dash-main">
+              <div class="stat-grid">${Array.from({ length: 4 }).map(() => `<div class="stat-card"><div class="skeleton skeleton-avatar"></div><div style="flex:1"><div class="skeleton skeleton-line w-60"></div><div class="skeleton skeleton-line w-40" style="margin:0"></div></div></div>`).join('')}</div>
+              <div class="panel"><div class="panel-body">${spinnerBlock('Loading your bookings and earnings...')}</div></div>
+            </div>
+          </div>`;
+      }
+
+      function renderSidebar() {
+        const name = fullName(state.user);
+        return `
+          <div class="dash-profile">
+            ${avatar(name, 'avatar-lg')}
+            <div>
+              <strong>${escapeHtml(name)}</strong>
+              <span>${state.profile ? (state.profile.verified ? 'Verified professional' : 'Professional account') : 'Professional account'}</span>
+              ${state.profile ? `<span class="badge ${state.profile.verified ? 'badge-green' : 'badge-gray'} mt-1">${state.profile.verified ? 'Verified' : 'Pending verification'}</span>` : ''}
+            </div>
+          </div>
+          <nav class="dash-nav" aria-label="Professional dashboard sections">
+            <button type="button" data-dash-tab="overview" class="${state.activeTab === 'overview' ? 'active' : ''}">${icon('home', 'icon-sm')} Overview</button>
+            <button type="button" data-dash-tab="calendar" class="${state.activeTab === 'calendar' ? 'active' : ''}">${icon('calendar', 'icon-sm')} Calendar</button>
+            <button type="button" data-dash-tab="bookings" class="${state.activeTab === 'bookings' ? 'active' : ''}">${icon('file', 'icon-sm')} Bookings ${getPending().length ? `<span class="tab-count">${getPending().length}</span>` : ''}</button>
+            <button type="button" data-dash-tab="profile" class="${state.activeTab === 'profile' ? 'active' : ''}">${icon('user', 'icon-sm')} Profile &amp; services</button>
+            <button type="button" data-dash-tab="earnings" class="${state.activeTab === 'earnings' ? 'active' : ''}">${icon('chart', 'icon-sm')} Earnings</button>
+          </nav>`;
+      }
+
+      function renderShell() {
+        const name = fullName(state.user);
+        root.innerHTML = `
+          <div class="dashboard-head">
+            <div>
+              <span class="eyebrow">${icon('briefcase', 'icon-sm')} Professional dashboard</span>
+              <h1>Your practice, ${escapeHtml((state.user.first_name || 'there'))}</h1>
+              <p>Manage your profile, services, availability, and client bookings.</p>
+            </div>
+            <div class="row">
+              ${state.profile ? `<a class="btn btn-outline" href="/marketplace/profile.html?id=${state.profile.id}">${icon('eye', 'icon-sm')} View public profile</a>` : ''}
+              <a class="btn btn-primary" href="/messages.html">${icon('message', 'icon-sm')} Messages</a>
+            </div>
+          </div>
+          <div class="dashboard-layout">
+            <aside class="dash-side" id="dashSide">${renderSidebar()}</aside>
+            <div class="dash-main" id="dashMain"></div>
+          </div>`;
+        bindSidebar();
+        renderMain();
+      }
+
+      function bindSidebar() {
+        root.querySelectorAll('[data-dash-tab]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.activeTab = button.dataset.dashTab;
+            root.querySelectorAll('[data-dash-tab]').forEach((item) => item.classList.toggle('active', item === button));
+            renderMain();
+          });
+        });
+      }
+
+      function renderMain() {
+        const main = document.getElementById('dashMain');
+        if (!main) return;
+        if (state.activeTab === 'calendar') main.innerHTML = renderCalendarTab();
+        else if (state.activeTab === 'bookings') main.innerHTML = renderBookingsTab();
+        else if (state.activeTab === 'profile') main.innerHTML = renderProfileTab();
+        else if (state.activeTab === 'earnings') main.innerHTML = renderEarningsTab();
+        else main.innerHTML = renderOverviewTab();
+        bindMainEvents();
+      }
+
+      function renderStats() {
+        const upcoming = getUpcoming();
+        const pending = getPending();
+        const rating = Number(state.profile?.average_rating || 0);
+        return `
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="icon-box green">${icon('dollar', 'icon-lg')}</div>
+              <div class="stat-meta"><span>Total earnings</span><strong>${money(totalEarnings())}</strong><small>Gross consultation volume</small></div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box">${icon('credit', 'icon-lg')}</div>
+              <div class="stat-meta"><span>Available balance</span><strong>${money(availableBalance())}</strong><small>Ready for payout</small></div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box amber">${icon('calendar', 'icon-lg')}</div>
+              <div class="stat-meta"><span>Pending bookings</span><strong>${pending.length}</strong><small>${upcoming.length} upcoming confirmed or pending</small></div>
+            </div>
+            <div class="stat-card">
+              <div class="icon-box purple">${icon('star', 'icon-lg')}</div>
+              <div class="stat-meta"><span>Average rating</span><strong>${rating ? rating.toFixed(1) : '—'}</strong><small>${Number(state.profile?.total_consultations || 0)} consultations completed</small></div>
+            </div>
+          </div>`;
+      }
+
+      function renderOverviewTab() {
+        const upcoming = getUpcoming().slice(0, 3);
+        const pending = getPending().slice(0, 3);
+        const completeness = computeCompleteness();
+        return `
+          <div class="dash-section">
+            ${!state.profile ? `
+              <div class="alert alert-info">
+                ${icon('info')}
+                <div>
+                  <strong>Complete your professional profile to appear in the marketplace.</strong>
+                  <div class="small">Add your bio, credentials, and services so clients can find and book you.</div>
+                  <button class="btn btn-primary btn-sm mt-2" type="button" data-dash-tab="profile">Complete profile</button>
+                </div>
+              </div>` : ''}
+            ${renderStats()}
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>Profile strength</h2><p class="small muted">A complete profile builds trust and ranks higher in search.</p></div>
+                <span class="badge ${completeness.score === 100 ? 'badge-green' : completeness.score >= 60 ? 'badge-primary' : 'badge-amber'}">${completeness.score}% complete</span>
+              </div>
+              <div class="panel-body">
+                <div class="progress"><div class="progress-bar" style="width:${completeness.score}%"></div></div>
+                <div class="row-wrap mt-3">
+                  ${completeness.checks.map((check) => `<span class="badge ${check.done ? 'badge-green' : 'badge-gray'}">${check.done ? icon('check', 'icon-sm') : ''} ${escapeHtml(check.label)}</span>`).join('')}
+                </div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>Pending requests</h2><p class="small muted">Confirm or decline new consultation requests.</p></div>
+                <span class="badge badge-amber">${getPending().length} waiting</span>
+              </div>
+              ${pending.length ? `<div class="appointment-list">${pending.map(renderBookingCard).join('')}</div>` : `
+                <div class="card-body">
+                  <div class="empty-state" style="border:0;padding:2rem 1rem;background:transparent">
+                    <div class="icon-box green">${icon('checkCircle', 'icon-lg')}</div>
+                    <h3>No pending requests</h3>
+                    <p>New booking requests will appear here for your review.</p>
+                  </div>
+                </div>`}
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>Upcoming consultations</h2><p class="small muted">Your next scheduled client sessions.</p></div>
+                <button class="btn btn-outline btn-sm" type="button" data-dash-tab="calendar">${icon('calendar', 'icon-sm')} Open calendar</button>
+              </div>
+              ${upcoming.length ? `<div class="appointment-list">${upcoming.map(renderBookingCard).join('')}</div>` : `
+                <div class="card-body">
+                  ${emptyState({ icon: 'calendar', title: 'No upcoming consultations', message: 'Share your public profile to start receiving bookings.' })}
+                </div>`}
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>Earnings snapshot</h2><p class="small muted">Platform commission is automatically deducted.</p></div>
+                <button class="btn btn-outline btn-sm" type="button" data-dash-tab="earnings">View earnings</button>
+              </div>
+              <div class="panel-body">
+                <div class="earnings-hero">
+                  <div class="earnings-item"><span>Gross volume</span><strong>${money(totalEarnings())}</strong><small>All eligible bookings</small></div>
+                  <div class="earnings-item muted"><span>Platform fees</span><strong>${money(commissionsPaid())}</strong><small>20% marketplace commission</small></div>
+                  <div class="earnings-item"><span>Available</span><strong>${money(availableBalance())}</strong><small>Ready for payout</small></div>
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }
+
+      function renderBookingCard(booking) {
+        const date = parseDate(booking.scheduled_at) || new Date();
+        const status = String(booking.status || '').toLowerCase();
+        const client = booking.client_name || 'Client';
+        const meeting = safeMeetingUrl(booking.meeting_link);
+        const actions = [];
+
+        if (status === 'pending') {
+          actions.push(`<button class="btn btn-secondary btn-sm" type="button" data-confirm-booking="${booking.id}">${icon('check', 'icon-sm')} Confirm</button>`);
+          actions.push(`<button class="btn btn-soft-danger btn-sm" type="button" data-decline-booking="${booking.id}">Decline</button>`);
+        } else if (status === 'confirmed') {
+          actions.push(`<button class="btn btn-secondary btn-sm" type="button" data-complete-booking="${booking.id}">${icon('check', 'icon-sm')} Complete</button>`);
+          actions.push(`<button class="btn btn-outline btn-sm" type="button" data-meeting-booking="${booking.id}">${icon('video', 'icon-sm')} ${meeting ? 'Edit link' : 'Add link'}</button>`);
+        }
+        actions.push(`<a class="btn btn-outline btn-sm" href="${messageLink(booking.client_id, client)}">${icon('message', 'icon-sm')} Message</a>`);
+        if (meeting) {
+          actions.push(`<a class="btn btn-ghost btn-sm" href="${escapeHtml(meeting)}" target="_blank" rel="noopener noreferrer">${icon('video', 'icon-sm')} Join</a>`);
+        }
+
+        return `
+          <div class="appointment-card">
+            <div class="appt-date">
+              <span>${date.toLocaleDateString('en-US', { month: 'short' })}</span>
+              <strong>${date.getDate()}</strong>
+            </div>
+            <div class="appt-main">
+              <h3>${escapeHtml(booking.service_name || 'Consultation')} ${statusBadge(status)}</h3>
+              <p>with ${escapeHtml(client)}</p>
+              <div class="appt-meta">
+                <span>${icon('clock', 'icon-sm')} ${formatTime(booking.scheduled_at)} · ${durationLabel(booking.duration_minutes)}</span>
+                <span>${icon('calendar', 'icon-sm')} ${formatDate(booking.scheduled_at)}</span>
+              </div>
+            </div>
+            <div class="appt-side">
+              <div class="price"><span>You receive</span><strong>${money(booking.professional_receives, 2)}</strong></div>
+              <div class="appt-actions">${actions.join('')}</div>
+            </div>
+          </div>`;
+      }
+
+      function renderCalendarTab() {
+        const cursor = state.calendarCursor;
+        const year = cursor.getFullYear();
+        const month = cursor.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const startOffset = firstDay.getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
+        const today = new Date();
+        const grouped = {};
+        profileBookings().forEach((booking) => {
+          const key = dateKey(booking.scheduled_at);
+          if (!key) return;
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push(booking);
+        });
+
+        const cells = [];
+        for (let i = 0; i < totalCells; i += 1) {
+          const dayNumber = i - startOffset + 1;
+          if (dayNumber < 1 || dayNumber > daysInMonth) {
+            cells.push('<div class="calendar-day outside"></div>');
+            continue;
+          }
+          const date = new Date(year, month, dayNumber);
+          const key = dateKey(date);
+          const dayBookings = grouped[key] || [];
+          const dots = dayBookings.slice(0, 3).map((booking) => `<span class="day-dot ${String(booking.status).toLowerCase()}"></span>`).join('');
+          const isToday = key === dateKey(today);
+          const selected = key === state.selectedDay;
+          cells.push(`
+            <button class="calendar-day ${isToday ? 'today' : ''} ${selected ? 'selected' : ''} ${dayBookings.length ? 'has-booking' : ''}" type="button" data-cal-day="${key}">
+              <span class="day-num">${dayNumber}</span>
+              <span class="day-dots">${dots}</span>
+              ${dayBookings.length ? `<span class="day-count">${dayBookings.length} booking${dayBookings.length === 1 ? '' : 's'}</span>` : ''}
+            </button>`);
+        }
+
+        const selectedBookings = (grouped[state.selectedDay] || []).slice().sort((a, b) => (parseDate(a.scheduled_at)?.getTime() || 0) - (parseDate(b.scheduled_at)?.getTime() || 0));
+
+        return `
+          <div class="dash-section">
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>Consultation calendar</h2><p class="small muted">Click a day to review scheduled appointments.</p></div>
+                <button class="btn btn-outline btn-sm" type="button" data-cal-today>${icon('calendar', 'icon-sm')} Today</button>
+              </div>
+              <div class="panel-body">
+                <div class="calendar">
+                  <div class="calendar-head">
+                    <h3>${cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+                    <div class="calendar-nav">
+                      <button class="btn btn-outline btn-icon btn-sm" type="button" data-cal-prev aria-label="Previous month">${icon('chevronLeft', 'icon-sm')}</button>
+                      <button class="btn btn-outline btn-icon btn-sm" type="button" data-cal-next aria-label="Next month">${icon('chevronRight', 'icon-sm')}</button>
+                    </div>
+                  </div>
+                  <div class="calendar-weekdays">
+                    ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => `<span>${day}</span>`).join('')}
+                  </div>
+                  <div class="calendar-grid">${cells.join('')}</div>
+                </div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>${state.selectedDay ? formatDate(`${state.selectedDay}T12:00:00`, { year: 'numeric' }) : 'Selected day'}</h2><p class="small muted">${selectedBookings.length} appointment${selectedBookings.length === 1 ? '' : 's'} scheduled</p></div>
+              </div>
+              ${selectedBookings.length ? `<div class="calendar-detail panel-body">${selectedBookings.map(renderBookingCard).join('')}</div>` : `<div class="panel-body"><div class="empty-state" style="border:0;padding:2rem 1rem;background:transparent"><div class="icon-box">${icon('calendar', 'icon-lg')}</div><h3>No appointments this day</h3><p>Select another day, or share your profile to invite more bookings.</p></div></div>`}
+            </div>
+          </div>`;
+      }
+
+      function renderBookingsTab() {
+        const all = profileBookings().slice().sort((a, b) => (parseDate(b.scheduled_at)?.getTime() || 0) - (parseDate(a.scheduled_at)?.getTime() || 0));
+        const filters = [
+          { key: 'all', label: 'All' },
+          { key: 'pending', label: 'Pending' },
+          { key: 'confirmed', label: 'Confirmed' },
+          { key: 'completed', label: 'Completed' },
+          { key: 'cancelled', label: 'Cancelled' }
+        ];
+        const filtered = state.bookingFilter === 'all' ? all : all.filter((booking) => String(booking.status).toLowerCase() === state.bookingFilter);
+
+        return `
+          <div class="dash-section">
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>Bookings</h2><p class="small muted">Review requests, manage meeting links, and update appointment status.</p></div>
+                <span class="badge badge-gray">${all.length} total</span>
+              </div>
+              <div class="panel-body" style="padding-bottom:.75rem">
+                <div class="row-wrap">
+                  ${filters.map((filter) => {
+                    const count = filter.key === 'all' ? all.length : all.filter((booking) => String(booking.status).toLowerCase() === filter.key).length;
+                    return `<button class="duration-chip ${state.bookingFilter === filter.key ? 'selected' : ''}" type="button" data-booking-filter="${filter.key}">${filter.label} (${count})</button>`;
+                  }).join('')}
+                </div>
+              </div>
+              ${filtered.length ? `<div class="appointment-list">${filtered.map(renderBookingCard).join('')}</div>` : `
+                <div class="panel-body">
+                  ${emptyState({ icon: 'file', title: 'No bookings in this view', message: 'Try a different status filter or share your profile to attract clients.' })}
+                </div>`}
+            </div>
+          </div>`;
+      }
+
+      function renderProfileTab() {
+        const profile = state.profile || {};
+        const specialties = Array.isArray(profile.specialties) ? profile.specialties.join(', ') : '';
+        const certifications = Array.isArray(profile.certifications) ? profile.certifications.join(', ') : '';
+        const availabilityNotes = profile.availability_json && typeof profile.availability_json === 'object' ? (profile.availability_json.notes || '') : '';
+
+        return `
+          <div class="dash-section">
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>${state.profile ? 'Profile details' : 'Create your professional profile'}</h2><p class="small muted">This information appears on your public marketplace profile.</p></div>
+                ${state.profile ? `<a class="btn btn-outline btn-sm" href="/marketplace/profile.html?id=${state.profile.id}">${icon('eye', 'icon-sm')} View public profile</a>` : '<span class="badge badge-amber">Required</span>'}
+              </div>
+              <div class="panel-body">
+                <form id="profileForm">
+                  <div class="form-grid">
+                    <div class="field span-2">
+                      <label class="label" for="profBio">Professional bio</label>
+                      <textarea class="textarea" id="profBio" maxlength="2000" placeholder="Describe your experience, the clients you serve, and how you help businesses save on taxes.">${escapeHtml(profile.bio || '')}</textarea>
+                      <span class="hint">A strong bio explains your niche, approach, and results. Aim for 2-4 sentences.</span>
+                    </div>
+                    <div class="field">
+                      <label class="label" for="profSpecialties">Specialties</label>
+                      <input class="input" id="profSpecialties" placeholder="S-Corp, LLC, Tax planning" value="${escapeHtml(specialties)}">
+                      <span class="hint">Comma-separated.</span>
+                    </div>
+                    <div class="field">
+                      <label class="label" for="profCertifications">Certifications</label>
+                      <input class="input" id="profCertifications" placeholder="CPA, EA" value="${escapeHtml(certifications)}">
+                      <span class="hint">Comma-separated.</span>
+                    </div>
+                    <div class="field">
+                      <label class="label" for="profExperience">Years of experience</label>
+                      <input class="input" id="profExperience" type="number" min="0" max="60" placeholder="10" value="${profile.years_experience ?? ''}">
+                    </div>
+                    <div class="field">
+                      <label class="label" for="profLicense">License number</label>
+                      <input class="input" id="profLicense" placeholder="CPA-123456" value="${escapeHtml(profile.license_number || '')}">
+                    </div>
+                    <div class="field span-2">
+                      <label class="label" for="profAvailability">Availability notes</label>
+                      <input class="input" id="profAvailability" placeholder="Weekdays, 9am-5pm Eastern" value="${escapeHtml(availabilityNotes)}">
+                      <span class="hint">Shown internally. Standard booking slots are 9am-5pm local time.</span>
+                    </div>
+                  </div>
+                  <div class="row-between mt-4">
+                    <span class="small muted">${state.profile && state.profile.verified ? 'Your credentials have been verified.' : 'Verification is reviewed by the TaxSavings team.'}</span>
+                    <button class="btn btn-primary" id="saveProfileButton" type="submit">${state.profile ? 'Save changes' : 'Create profile'}</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            ${state.profile ? `
+              <div class="panel">
+                <div class="panel-head">
+                  <div><h2>Services &amp; rate cards</h2><p class="small muted">Set clear pricing for the consultations clients can book.</p></div>
+                  <span class="badge badge-gray">${state.rateCards.length} service${state.rateCards.length === 1 ? '' : 's'}</span>
+                </div>
+                <div class="panel-body">
+                  ${state.rateCards.length ? state.rateCards.map((rate) => `
+                    <div class="service-manage">
+                      <div>
+                        <h4>${escapeHtml(rate.service_name)}</h4>
+                        <p>${serviceTypeLabel(rate.service_type)} · ${rate.duration_minutes ? durationLabel(rate.duration_minutes) : 'Flexible duration'}</p>
+                        ${rate.description ? `<p class="tiny faint">${escapeHtml(rate.description)}</p>` : ''}
+                      </div>
+                      <div class="price"><strong>${money(rate.price)}</strong><span>${rate.service_type === 'hourly' ? 'per hour' : 'per session'}</span></div>
+                    </div>`).join('') : '<p class="small muted">No services yet. Add your first service below so clients can book you.</p>'}
+                </div>
+                <div class="card-footer">
+                  <form id="rateCardForm">
+                    <div class="form-section-title">Add a service</div>
+                    <div class="form-grid">
+                      <div class="field span-2">
+                        <label class="label" for="rateName">Service name</label>
+                        <input class="input" id="rateName" placeholder="S-Corp tax planning session" required>
+                      </div>
+                      <div class="field">
+                        <label class="label" for="rateType">Service type</label>
+                        <select class="select" id="rateType">
+                          <option value="fixed">Fixed price</option>
+                          <option value="hourly">Hourly</option>
+                          <option value="package">Package</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label class="label" for="ratePrice">Price (USD)</label>
+                        <input class="input" id="ratePrice" type="number" min="0" step="0.01" placeholder="250" required>
+                      </div>
+                      <div class="field">
+                        <label class="label" for="rateDuration">Duration (minutes)</label>
+                        <input class="input" id="rateDuration" type="number" min="15" step="15" placeholder="60" value="60">
+                      </div>
+                      <div class="field span-2">
+                        <label class="label" for="rateDescription">Description</label>
+                        <textarea class="textarea" id="rateDescription" maxlength="500" placeholder="What clients can expect from this session." style="min-height:80px"></textarea>
+                      </div>
+                    </div>
+                    <div class="row-between mt-3">
+                      <span class="hint">The 20% platform commission is included in the price.</span>
+                      <button class="btn btn-secondary" id="addRateButton" type="submit">${icon('plus', 'icon-sm')} Add service</button>
+                    </div>
+                  </form>
+                </div>
+              </div>` : `
+              <div class="alert alert-info">
+                ${icon('info')}
+                <div><strong>Save your profile first.</strong><div class="small">Once your professional profile is created, you can publish services and rate cards.</div></div>
+              </div>`}
+          </div>`;
+      }
+
+      function renderEarningsTab() {
+        const earnings = state.earnings || {};
+        const status = earnings.subscription_status || 'not_active';
+        const balance = Number(earnings.current_balance || 0);
+        return `
+          <div class="dash-section">
+            <div class="panel">
+              <div class="panel-head">
+                <div><h2>Earnings summary</h2><p class="small muted">Track gross volume, platform commissions, and your available balance.</p></div>
+                <span class="badge ${status === 'active' ? 'badge-green' : 'badge-amber'}">${status === 'active' ? 'Subscription active' : 'Payouts not active'}</span>
+              </div>
+              <div class="panel-body">
+                <div class="earnings-hero">
+                  <div class="earnings-item"><span>Total earnings</span><strong>${money(earnings.total_earnings || 0)}</strong><small>Gross booking volume</small></div>
+                  <div class="earnings-item muted"><span>Commissions paid</span><strong>${money(earnings.total_commissions_paid || 0)}</strong><small>Paid out to your account</small></div>
+                  <div class="earnings-item"><span>Current balance</span><strong>${money(balance)}</strong><small>Available to withdraw</small></div>
+                </div>
+                <div class="detail-grid">
+                  <div class="detail-item"><span class="label">Subscription status</span><span class="value">${escapeHtml(status === 'active' ? 'Active' : 'Not subscribed')}</span></div>
+                  <div class="detail-item"><span class="label">Platform fee</span><span class="value">20% per booking</span></div>
+                  <div class="detail-item"><span class="label">Payout method</span><span class="value">Bank transfer via Stripe</span></div>
+                  <div class="detail-item"><span class="label">Next step</span><span class="value">${balance > 0 ? 'Request a payout' : 'Complete consultations'}</span></div>
+                </div>
+                ${!state.earnings ? `
+                  <div class="alert alert-warning mt-4">
+                    ${icon('alert')}
+                    <div><strong>Your professional subscription is not active.</strong><div class="small">Activate a subscription to receive payouts and unlock full earnings tracking.</div><button class="btn btn-secondary btn-sm mt-2" id="activateSubscription" type="button">Activate basic plan</button></div>
+                  </div>` : ''}
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div><h2>Request a payout</h2><p class="small muted">Transfer available earnings to your connected bank account.</p></div></div>
+              <div class="panel-body">
+                <form id="payoutForm">
+                  <div class="form-grid">
+                    <div class="field">
+                      <label class="label" for="payoutAmount">Amount</label>
+                      <input class="input" id="payoutAmount" type="number" min="1" step="0.01" max="${balance || 0}" placeholder="${balance ? balance.toFixed(2) : '0.00'}" ${balance > 0 ? '' : 'disabled'}>
+                      <span class="hint">Available balance: ${money(balance, 2)}</span>
+                    </div>
+                    <div class="field" style="justify-content:flex-end">
+                      <button class="btn btn-primary" id="payoutButton" type="submit" ${balance > 0 ? '' : 'disabled'}>${icon('dollar', 'icon-sm')} Request payout</button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><div><h2>Commission breakdown</h2><p class="small muted">How each consultation is split.</p></div></div>
+              <div class="panel-body">
+                <div class="summary-line"><span>Client pays</span><strong>Consultation total</strong></div>
+                <div class="summary-line"><span>TaxSavings marketplace fee</span><strong>20%</strong></div>
+                <div class="summary-line"><span>You receive</span><strong>80% of each booking</strong></div>
+                <div class="summary-line total"><span>Example on a $250 booking</span><strong>$200.00</strong></div>
+              </div>
+            </div>
+          </div>`;
+      }
+
+      function bindMainEvents() {
+        root.querySelectorAll('[data-dash-tab]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.activeTab = button.dataset.dashTab;
+            root.querySelectorAll('[data-dash-tab]').forEach((item) => item.classList.toggle('active', item === button));
+            renderMain();
+          });
+        });
+
+        root.querySelectorAll('[data-booking-filter]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.bookingFilter = button.dataset.bookingFilter;
+            renderMain();
+          });
+        });
+
+        root.querySelectorAll('[data-cal-prev]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.calendarCursor = new Date(state.calendarCursor.getFullYear(), state.calendarCursor.getMonth() - 1, 1);
+            state.selectedDay = dateKey(state.calendarCursor);
+            renderMain();
+          });
+        });
+
+        root.querySelectorAll('[data-cal-next]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.calendarCursor = new Date(state.calendarCursor.getFullYear(), state.calendarCursor.getMonth() + 1, 1);
+            state.selectedDay = dateKey(state.calendarCursor);
+            renderMain();
+          });
+        });
+
+        root.querySelectorAll('[data-cal-today]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const today = new Date();
+            state.calendarCursor = new Date(today.getFullYear(), today.getMonth(), 1);
+            state.selectedDay = dateKey(today);
+            renderMain();
+          });
+        });
+
+        root.querySelectorAll('[data-cal-day]').forEach((button) => {
+          button.addEventListener('click', () => {
+            state.selectedDay = button.dataset.calDay;
+            renderMain();
+          });
+        });
+
+        root.querySelectorAll('[data-confirm-booking]').forEach((button) => {
+          button.addEventListener('click', () => updateBookingStatus(button.dataset.confirmBooking, 'confirmed', 'Booking confirmed. The client has been notified.'));
+        });
+
+        root.querySelectorAll('[data-complete-booking]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const confirmed = await confirmDialog({
+              title: 'Mark consultation complete?',
+              message: 'This records the appointment as completed and updates your earnings.',
+              confirmText: 'Mark complete'
+            });
+            if (confirmed) updateBookingStatus(button.dataset.completeBooking, 'completed', 'Consultation marked complete.');
+          });
+        });
+
+        root.querySelectorAll('[data-decline-booking]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const confirmed = await confirmDialog({
+              title: 'Decline this booking?',
+              message: 'The client will be notified and the time slot will be released.',
+              confirmText: 'Decline booking',
+              danger: true
+            });
+            if (confirmed) updateBookingStatus(button.dataset.declineBooking, 'cancelled', 'Booking declined.');
+          });
+        });
+
+        root.querySelectorAll('[data-meeting-booking]').forEach((button) => {
+          button.addEventListener('click', () => editMeetingLink(button.dataset.meetingBooking));
+        });
+
+        const profileForm = document.getElementById('profileForm');
+        if (profileForm) profileForm.addEventListener('submit', saveProfile);
+
+        const rateCardForm = document.getElementById('rateCardForm');
+        if (rateCardForm) rateCardForm.addEventListener('submit', addRateCard);
+
+        const payoutForm = document.getElementById('payoutForm');
+        if (payoutForm) payoutForm.addEventListener('submit', requestPayout);
+
+        const activate = document.getElementById('activateSubscription');
+        if (activate) activate.addEventListener('click', activateSubscription);
+      }
+
+      async function updateBookingStatus(id, status, successMessage) {
+        const button = root.querySelector(`[data-confirm-booking="${id}"], [data-decline-booking="${id}"], [data-complete-booking="${id}"]`);
+        if (button) setButtonLoading(button, true);
+        try {
+          await api(`/consultations/${id}`, { method: 'PUT', body: { status } });
+          showToast(successMessage, 'success');
+          await refreshBookings();
+        } catch (error) {
+          showToast(error.message || 'Could not update the booking.', 'error');
+          if (button) setButtonLoading(button, false);
+        }
+      }
+
+      function editMeetingLink(id) {
+        const booking = profileBookings().find((item) => String(item.id) === String(id));
+        if (!booking) return;
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.innerHTML = `
+          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="meetingTitle">
+            <div class="modal-body">
+              <h3 id="meetingTitle">Meeting link</h3>
+              <p>Paste a Zoom, Google Meet, or other secure video link for this consultation.</p>
+              <div class="field mt-4">
+                <label class="label" for="meetingLinkInput">Video meeting URL</label>
+                <input class="input" id="meetingLinkInput" type="url" placeholder="https://meet.google.com/..." value="${escapeHtml(booking.meeting_link || '')}">
+                <span class="error-text" id="meetingError"></span>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button class="btn btn-outline" type="button" data-close>Cancel</button>
+              <button class="btn btn-primary" type="button" data-save>Save link</button>
+            </div>
+          </div>`;
+        document.body.appendChild(backdrop);
+        const input = backdrop.querySelector('#meetingLinkInput');
+        const errorEl = backdrop.querySelector('#meetingError');
+        const close = () => backdrop.remove();
+        backdrop.querySelector('[data-close]').addEventListener('click', close);
+        backdrop.addEventListener('click', (event) => { if (event.target === backdrop) close(); });
+        input.focus();
+
+        backdrop.querySelector('[data-save]').addEventListener('click', async () => {
+          const value = input.value.trim();
+          if (!safeMeetingUrl(value)) {
+            errorEl.textContent = 'Enter a valid http or https meeting link.';
+            input.focus();
+            return;
+          }
+          const saveButton = backdrop.querySelector('[data-save]');
+          setButtonLoading(saveButton, true);
+          try {
+            await api(`/consultations/${id}`, { method: 'PUT', body: { meeting_link: value } });
+            showToast('Meeting link saved.', 'success');
+            close();
+            await refreshBookings();
+          } catch (error) {
+            errorEl.textContent = error.message || 'Could not save the meeting link.';
+            setButtonLoading(saveButton, false);
+          }
+        });
+      }
+
+      async function refreshBookings() {
+        try {
+          const data = await api('/consultations/my-bookings?limit=100');
+          state.bookings = Array.isArray(data) ? data : [];
+          renderShell();
+        } catch (error) {
+          showToast(error.message || 'Could not refresh bookings.', 'error');
+        }
+      }
+
+      async function saveProfile(event) {
+        event.preventDefault();
+        const button = document.getElementById('saveProfileButton');
+        const specialties = document.getElementById('profSpecialties').value.split(',').map((item) => item.trim()).filter(Boolean);
+        const certifications = document.getElementById('profCertifications').value.split(',').map((item) => item.trim()).filter(Boolean);
+        const experience = document.getElementById('profExperience').value;
+        const availabilityNotes = document.getElementById('profAvailability').value.trim();
+        const availability = state.profile && state.profile.availability_json && typeof state.profile.availability_json === 'object'
+          ? { ...state.profile.availability_json }
+          : {};
+        availability.notes = availabilityNotes;
+
+        const payload = {
+          bio: document.getElementById('profBio').value.trim() || null,
+          specialties,
+          years_experience: experience ? Number(experience) : null,
+          certifications,
+          license_number: document.getElementById('profLicense').value.trim() || null,
+          availability_json: availability
+        };
+
+        setButtonLoading(button, true);
+        try {
+          const saved = await api('/professionals/profile', {
+            method: state.profile ? 'PUT' : 'POST',
+            body: payload
+          });
+          state.profile = saved;
+          state.rateCards = Array.isArray(saved.rate_cards) ? saved.rate_cards : [];
+          if (!state.activeTab || state.activeTab === 'profile') state.activeTab = 'overview';
+          showToast(state.profile ? 'Profile saved.' : 'Professional profile created.', 'success');
+          renderShell();
+        } catch (error) {
+          showToast(error.message || 'Could not save your profile.', 'error');
+          setButtonLoading(button, false);
+        }
+      }
+
+      async function addRateCard(event) {
+        event.preventDefault();
+        if (!state.profile) {
+          showToast('Create your professional profile first.', 'error');
+          return;
+        }
+        const button = document.getElementById('addRateButton');
+        const duration = document.getElementById('rateDuration').value;
+        const payload = {
+          service_name: document.getElementById('rateName').value.trim(),
+          service_type: document.getElementById('rateType').value,
+          price: Number(document.getElementById('ratePrice').value),
+          duration_minutes: duration ? Number(duration) : null,
+          description: document.getElementById('rateDescription').value.trim() || null
+        };
+        if (!payload.service_name || !payload.price || payload.price <= 0) {
+          showToast('Enter a service name and a price greater than zero.', 'error');
+          return;
+        }
+        setButtonLoading(button, true);
+        try {
+          const created = await api('/professionals/profile/rate-cards', { method: 'POST', body: payload });
+          state.rateCards.push(created);
+          state.profile.rate_cards = state.rateCards;
+          showToast('Service added to your rate card.', 'success');
+          renderMain();
+        } catch (error) {
+          showToast(error.message || 'Could not add the service.', 'error');
+          setButtonLoading(button, false);
+        }
+      }
+
+      async function requestPayout(event) {
+        event.preventDefault();
+        const balance = availableBalance();
+        const input = document.getElementById('payoutAmount');
+        const amount = Number(input.value);
+        if (!amount || amount <= 0) {
+          showToast('Enter a payout amount greater than zero.', 'error');
+          return;
+        }
+        if (amount > balance) {
+          showToast('The payout amount exceeds your available balance.', 'error');
+          return;
+        }
+        const button = document.getElementById('payoutButton');
+        setButtonLoading(button, true);
+        try {
+          const result = await api(`/payments/payout?amount=${encodeURIComponent(amount)}`, { method: 'POST' });
+          showToast(`Payout of ${money(result.amount || amount, 2)} requested.`, 'success');
+          await refreshEarnings();
+        } catch (error) {
+          showToast(error.message || 'Could not request a payout. Stripe may not be configured.', 'error');
+          setButtonLoading(button, false);
+        }
+      }
+
+      async function activateSubscription() {
+        const button = document.getElementById('activateSubscription');
+        setButtonLoading(button, true);
+        try {
+          await api('/payments/subscription/create?plan_type=basic', { method: 'POST' });
+          showToast('Professional subscription activated.', 'success');
+          await refreshEarnings();
+        } catch (error) {
+          showToast(error.message || 'Could not activate a subscription. Stripe may not be configured.', 'error');
+          setButtonLoading(button, false);
+        }
+      }
+
+      async function refreshEarnings() {
+        try {
+          state.earnings = await api('/payments/earnings');
+        } catch (error) {
+          state.earnings = null;
+        }
+        renderMain();
+      }
+
+      async function loadData() {
+        skeleton();
+        try {
+          const [profileResult, bookingsResult, earningsResult] = await Promise.allSettled([
+            api('/professionals/profile'),
+            api('/consultations/my-bookings?limit=100'),
+            api('/payments/earnings')
+          ]);
+
+          if (profileResult.status === 'fulfilled') {
+            state.profile = profileResult.value;
+            state.rateCards = Array.isArray(profileResult.value.rate_cards) ? profileResult.value.rate_cards : [];
+            state.errors.profile = null;
+          } else if (profileResult.reason?.status === 404 || profileResult.reason?.status === 403) {
+            state.profile = null;
+            state.rateCards = [];
+            state.errors.profile = null;
+          } else {
+            state.errors.profile = profileResult.reason?.message || 'Profile could not be loaded.';
+          }
+
+          if (bookingsResult.status === 'fulfilled') {
+            state.bookings = Array.isArray(bookingsResult.value) ? bookingsResult.value : [];
+            state.errors.bookings = null;
+          } else {
+            state.bookings = [];
+            state.errors.bookings = bookingsResult.reason?.message || 'Bookings could not be loaded.';
+          }
+
+          if (earningsResult.status === 'fulfilled') {
+            state.earnings = earningsResult.value;
+            state.errors.earnings = null;
+          } else {
+            state.earnings = null;
+            state.errors.earnings = earningsResult.reason?.status === 404 ? null : (earningsResult.reason?.message || 'Earnings could not be loaded.');
+          }
+
+          state.activeTab = state.profile ? 'overview' : 'profile';
+          renderShell();
+          if (state.errors.bookings) showToast(state.errors.bookings, 'warning');
+        } catch (error) {
+          root.innerHTML = `
+            <div class="dashboard-head"><div><span class="eyebrow">Professional dashboard</span><h1>We couldn't load your practice</h1></div></div>
+            <div class="card"><div class="card-body"><div class="empty-state" style="border:0"><div class="icon-box amber">${icon('alert', 'icon-lg')}</div><h3>Something went wrong</h3><p>${escapeHtml(error.message || 'Please try again.')}</p><button class="btn btn-primary" id="retryProfessional" type="button">Try again</button></div></div></div>`;
+          const retry = document.getElementById('retryProfessional');
+          if (retry) retry.addEventListener('click', loadData);
+        }
+      }
+
+      async function init() {
+        try {
+          const user = await getCurrentUser();
+          if (!user) {
+            renderAuthWall(root, {
+              title: 'Sign in to your professional dashboard',
+              message: 'Manage your public profile, services, consultation calendar, and earnings.'
+            });
+            return;
+          }
+          state.user = user;
+          await loadData();
+        } catch (error) {
+          renderAuthWall(root, {
+            title: 'Sign in to continue',
+            message: 'We could not verify your session. Please sign in again to access your practice.'
+          });
+        }
+      }
+
+      init();
+    });
+  </script>
+</body>
+</html>

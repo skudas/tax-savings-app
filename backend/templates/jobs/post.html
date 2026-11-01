@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Post a new tax, bookkeeping, or audit job on the TaxSavings job marketplace.">
+  <title>Post a Job | TaxSavings Job Marketplace</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/css/marketplace.css">
+  <link rel="stylesheet" href="/static/css/jobs.css">
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="container jobs-page">
+    <div id="postRoot">
+      <div class="loading-block" style="padding-top:6rem">
+        <div class="spinner"></div>
+        <span>Checking your job posting subscription...</span>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="/static/js/marketplace.js"></script>
+  <script>
+    (() => {
+      document.addEventListener('DOMContentLoaded', () => {
+        renderHeader('jobs');
+        renderFooter();
+
+        const root = document.getElementById('postRoot');
+        const state = {
+          user: null,
+          subscription: null,
+          budgetType: 'fixed',
+          skills: [],
+          submitting: false
+        };
+
+        const CATEGORIES = ['Tax Return', 'Bookkeeping', 'Audit', 'Tax Planning', 'Payroll', 'CFO Services', 'Other'];
+        const SUGGESTED_SKILLS = ['Tax Preparation', 'S-Corp', 'Bookkeeping', 'QuickBooks', 'Audit Support', 'Payroll', 'Tax Planning', 'Financial Statements', 'Excel', 'CPA'];
+
+        function redirectToLogin() {
+          const redirect = `${window.location.pathname}${window.location.search}`;
+          window.location.href = `/auth/login.html?redirect=${encodeURIComponent(redirect)}`;
+        }
+
+        function subscriptionActive() {
+          const sub = state.subscription;
+          if (!sub) return false;
+          if (sub.subscribed === true) return true;
+          if (sub.subscribed === false) return false;
+          return String(sub.status || '').toLowerCase() === 'active';
+        }
+
+        function activeCount() {
+          return Number(state.subscription?.active_job_count || 0);
+        }
+
+        function maxJobs() {
+          return Number(state.subscription?.max_concurrent_jobs || 10);
+        }
+
+        function remainingSlots() {
+          return Math.max(0, maxJobs() - activeCount());
+        }
+
+        function subscriptionRenewal() {
+          const value = state.subscription?.renewal_date || state.subscription?.subscription_end;
+          return value ? formatDate(value) : 'Not active';
+        }
+
+        function errorPage(title, message) {
+          root.innerHTML = `
+            <div class="job-error-page">
+              <div class="empty-state">
+                <div class="icon-box amber">${icon('alert', 'icon-lg')}</div>
+                <h3>${escapeHtml(title)}</h3>
+                <p>${escapeHtml(message)}</p>
+                <button class="btn btn-primary" id="retryPost" type="button">Try again</button>
+              </div>
+            </div>`;
+          const retry = document.getElementById('retryPost');
+          if (retry) retry.addEventListener('click', load);
+        }
+
+        function renderSlots() {
+          const used = Math.min(activeCount(), maxJobs());
+          const percent = Math.min(100, Math.round((used / maxJobs()) * 100));
+          return `
+            <div class="slot-meter">
+              <div class="row-between">
+                <span>${used} of ${maxJobs()} active job slots used</span>
+                <strong>${remainingSlots()} left</strong>
+              </div>
+              <div class="progress" role="progressbar" aria-valuenow="${used}" aria-valuemin="0" aria-valuemax="${maxJobs()}" aria-label="Active job slots used">
+                <div class="progress-bar" style="width:${percent}%"></div>
+              </div>
+            </div>`;
+        }
+
+        function renderSubscriptionCard() {
+          const sub = state.subscription || {};
+          const active = subscriptionActive();
+          const status = active ? 'Active' : (sub.status ? String(sub.status).replace(/_/g, ' ') : 'Inactive');
+          return `
+            <div class="panel subscription-card">
+              <div class="subscription-top">
+                <div>
+                  <h2>Job posting subscription</h2>
+                  <p class="hint">${escapeHtml(sub.plan || '$50/year')} · post up to ${maxJobs()} open jobs at once</p>
+                </div>
+                <span class="badge ${active ? 'badge-green' : 'badge-amber'}">${escapeHtml(status)}</span>
+              </div>
+              <div class="subscription-meta">
+                <div>
+                  <span>Renewal date</span>
+                  <strong>${escapeHtml(subscriptionRenewal())}</strong>
+                </div>
+                <div>
+                  <span>Active jobs</span>
+                  <strong>${activeCount()} of ${maxJobs()}</strong>
+                </div>
+              </div>
+              ${renderSlots()}
+            </div>`;
+        }
+
+        function renderInactiveSection() {
+          return `
+            <div class="panel">
+              <div class="panel-body">
+                <div class="alert alert-warning mb-4">
+                  ${icon('alert')}
+                  <div>
+                    <strong>A job posting subscription is required.</strong>
+                    <div class="small">Activate the $50/year plan to publish jobs, receive bids, and manage applicants from your dashboard.</div>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <div>
+                    <h3 class="form-section-title mb-3">${icon('checkCircle', 'icon-sm')} What's included</h3>
+                    <ul class="job-list">
+                      <li>${icon('check', 'icon-sm')}<span>Up to 10 concurrent open job listings</span></li>
+                      <li>${icon('check', 'icon-sm')}<span>Unlimited applicant review and messaging</span></li>
+                      <li>${icon('check', 'icon-sm')}<span>Bid comparison and hiring management</span></li>
+                      <li>${icon('check', 'icon-sm')}<span>Annual plan renews at $50/year</span></li>
+                    </ul>
+                  </div>
+                  <div class="job-side-card" style="background:var(--surface-2);border-radius:var(--radius-sm)">
+                    <span class="badge badge-primary mb-2">Annual plan</span>
+                    <div class="job-budget">$50 <small>/ year</small></div>
+                    <p class="hint mt-2">Cancel anytime. Existing open jobs remain visible until their deadline or until you close them.</p>
+                    <button class="btn btn-primary btn-block mt-3" id="activateSubscription" type="button">${icon('credit', 'icon-sm')} Activate subscription</button>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+        }
+
+        function renderForm() {
+          const minLabel = state.budgetType === 'hourly' ? 'Minimum hourly rate' : 'Minimum budget';
+          const maxLabel = state.budgetType === 'hourly' ? 'Maximum hourly rate' : 'Maximum budget';
+          return `
+            <form class="panel job-form-card" id="jobForm" novalidate>
+              <div class="job-form-section">
+                <div class="job-form-section-head">
+                  <div class="icon-box">${icon('briefcase', 'icon-lg')}</div>
+                  <div>
+                    <h2>Job basics</h2>
+                    <p>Give professionals a clear summary of the project and the outcome you need.</p>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <div class="field span-2">
+                    <label class="label" for="jobTitle">Job title <span class="faint">*</span></label>
+                    <input class="input" id="jobTitle" name="title" type="text" maxlength="200" placeholder="e.g. Prepare 2025 S-Corp tax return" required>
+                    <p class="error-text" id="titleError" hidden></p>
+                  </div>
+                  <div class="field span-2">
+                    <label class="label" for="jobDescription">Description <span class="faint">*</span></label>
+                    <textarea class="textarea" id="jobDescription" name="description" rows="7" maxlength="5000" placeholder="Describe the business, the work involved, systems used, and any important deadlines or constraints." required></textarea>
+                    <div class="row-between">
+                      <p class="error-text" id="descriptionError" hidden></p>
+                      <span class="hint" id="descriptionCount">0 / 5000</span>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="jobCategory">Category <span class="faint">*</span></label>
+                    <select class="select" id="jobCategory" name="category" required>
+                      <option value="">Select a category</option>
+                      ${CATEGORIES.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('')}
+                    </select>
+                    <p class="error-text" id="categoryError" hidden></p>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="experienceLevel">Experience level <span class="faint">*</span></label>
+                    <select class="select" id="experienceLevel" name="experience_level" required>
+                      <option value="">Select level</option>
+                      <option value="entry">Entry level</option>
+                      <option value="intermediate">Intermediate</option>
+                      <option value="expert">Expert</option>
+                    </select>
+                    <p class="error-text" id="experienceError" hidden></p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="job-form-section">
+                <div class="job-form-section-head">
+                  <div class="icon-box green">${icon('dollar', 'icon-lg')}</div>
+                  <div>
+                    <h2>Budget &amp; timeline</h2>
+                    <p>Set a realistic range. Clear budgets attract stronger bids and fewer questions.</p>
+                  </div>
+                </div>
+                <div class="field mb-4">
+                  <span class="label">Budget type</span>
+                  <div class="budget-toggle" id="budgetToggle" role="group" aria-label="Budget type">
+                    <button type="button" data-budget-type="fixed" class="${state.budgetType === 'fixed' ? 'active' : ''}">Fixed price</button>
+                    <button type="button" data-budget-type="hourly" class="${state.budgetType === 'hourly' ? 'active' : ''}">Hourly</button>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <div class="field">
+                    <label class="label" for="budgetMin" id="budgetMinLabel">${escapeHtml(minLabel)} <span class="faint">*</span></label>
+                    <div class="input-group">
+                      <span class="input-icon">${icon('dollar')}</span>
+                      <input class="input" id="budgetMin" name="budget_min" type="number" min="1" step="0.01" placeholder="500" required>
+                    </div>
+                    <p class="error-text" id="budgetMinError" hidden></p>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="budgetMax" id="budgetMaxLabel">${escapeHtml(maxLabel)} <span class="faint">*</span></label>
+                    <div class="input-group">
+                      <span class="input-icon">${icon('dollar')}</span>
+                      <input class="input" id="budgetMax" name="budget_max" type="number" min="1" step="0.01" placeholder="1500" required>
+                    </div>
+                    <p class="error-text" id="budgetMaxError" hidden></p>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="jobDeadline">Deadline <span class="faint">*</span></label>
+                    <input class="input" id="jobDeadline" name="deadline" type="date" required>
+                    <p class="hint">Choose the latest date the work should be completed.</p>
+                    <p class="error-text" id="deadlineError" hidden></p>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="estimatedDuration">Estimated duration <span class="faint">*</span></label>
+                    <input class="input" id="estimatedDuration" name="estimated_duration" type="text" maxlength="100" placeholder="e.g. 2 weeks, 1 month" required>
+                    <p class="error-text" id="durationError" hidden></p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="job-form-section">
+                <div class="job-form-section-head">
+                  <div class="icon-box amber">${icon('award', 'icon-lg')}</div>
+                  <div>
+                    <h2>Requirements &amp; scope</h2>
+                    <p>Add the skills and deliverables that will help you compare applicants fairly.</p>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <div class="field span-2">
+                    <label class="label" for="skillInput">Required skills <span class="faint">*</span></label>
+                    <div class="tag-input" id="skillTags"></div>
+                    <div class="skill-suggestions" id="skillSuggestions">
+                      ${SUGGESTED_SKILLS.map((skill) => `<button type="button" data-skill="${escapeHtml(skill)}">+ ${escapeHtml(skill)}</button>`).join('')}
+                    </div>
+                    <p class="hint">Press Enter or comma after each skill. Add at least one skill.</p>
+                    <p class="error-text" id="skillsError" hidden></p>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="jobScope">Project scope <span class="faint">*</span></label>
+                    <select class="select" id="jobScope" name="scope" required>
+                      <option value="">Select scope</option>
+                      <option value="small">Small · under 20 hours</option>
+                      <option value="medium">Medium · 20 - 60 hours</option>
+                      <option value="large">Large · 60+ hours</option>
+                    </select>
+                    <p class="error-text" id="scopeError" hidden></p>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="jobDeliverables">Deliverables <span class="faint">*</span></label>
+                    <textarea class="textarea" id="jobDeliverables" name="deliverables" rows="5" placeholder="One deliverable per line&#10;e.g. Completed Form 1120-S&#10;Reconciliation workbook"></textarea>
+                    <p class="hint">List one deliverable per line. These become the expected outcomes for the project.</p>
+                    <p class="error-text" id="deliverablesError" hidden></p>
+                  </div>
+                  <div class="field span-2">
+                    <label class="label" for="scopeNotes">Scope notes <span class="faint">(optional)</span></label>
+                    <textarea class="textarea" id="scopeNotes" name="scope_notes" rows="4" maxlength="3000" placeholder="Add context about systems, access, review process, or anything applicants should know."></textarea>
+                  </div>
+                </div>
+              </div>
+
+              <div class="job-form-actions">
+                <a class="btn btn-outline" href="/jobs/my-listings.html">Cancel</a>
+                <button class="btn btn-primary" id="publishJob" type="submit">${icon('check', 'icon-sm')} Publish job</button>
+              </div>
+            </form>`;
+        }
+
+        function render() {
+          const active = subscriptionActive();
+          root.innerHTML = `
+            <div class="page-head">
+              <div>
+                <span class="eyebrow">${icon('briefcase', 'icon-sm')} Professional workspace</span>
+                <h1>Post a new job</h1>
+                <p>Publish a clear brief and receive bids from vetted tax and finance professionals.</p>
+              </div>
+              <div class="row">
+                <a class="btn btn-outline" href="/jobs/my-listings.html">${icon('file', 'icon-sm')} My listings</a>
+                <a class="btn btn-ghost" href="/jobs/browse.html">${icon('search', 'icon-sm')} Browse jobs</a>
+              </div>
+            </div>
+            ${renderSubscriptionCard()}
+            <div class="mt-5">
+              ${active ? renderForm() : renderInactiveSection()}
+            </div>`;
+
+          bindEvents();
+        }
+
+        function setFieldError(id, message) {
+          const field = document.getElementById(id);
+          if (!field) return;
+          field.textContent = message || '';
+          field.hidden = !message;
+        }
+
+        function renderSkillChips() {
+          const wrapper = document.getElementById('skillTags');
+          if (!wrapper) return;
+          wrapper.innerHTML = `
+            ${state.skills.map((skill, index) => `
+              <span class="skill-chip">${escapeHtml(skill)}
+                <button type="button" data-remove-skill="${index}" aria-label="Remove ${escapeHtml(skill)}">×</button>
+              </span>`).join('')}
+            <input id="skillInput" type="text" placeholder="${state.skills.length ? 'Add another skill...' : 'Type a skill and press Enter'}" aria-label="Add a required skill">`;
+          bindSkillInput();
+          document.querySelectorAll('[data-remove-skill]').forEach((button) => {
+            button.addEventListener('click', () => {
+              state.skills.splice(Number(button.dataset.removeSkill), 1);
+              renderSkillChips();
+            });
+          });
+        }
+
+        function addSkill(rawValue) {
+          const value = String(rawValue || '').trim().replace(/,$/, '').trim();
+          if (!value) return;
+          if (value.length > 40) {
+            showToast('Skills must be 40 characters or fewer.', 'warning');
+            return;
+          }
+          if (state.skills.some((skill) => skill.toLowerCase() === value.toLowerCase())) return;
+          if (state.skills.length >= 10) {
+            showToast('You can add up to 10 skills.', 'warning');
+            return;
+          }
+          state.skills.push(value);
+          setFieldError('skillsError', '');
+          renderSkillChips();
+          const input = document.getElementById('skillInput');
+          if (input) input.focus();
+        }
+
+        function bindSkillInput() {
+          const input = document.getElementById('skillInput');
+          if (!input) return;
+          input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ',') {
+              event.preventDefault();
+              addSkill(input.value);
+              input.value = '';
+            } else if (event.key === 'Backspace' && !input.value && state.skills.length) {
+              state.skills.pop();
+              renderSkillChips();
+            }
+          });
+          input.addEventListener('blur', () => {
+            if (input.value.trim()) {
+              addSkill(input.value);
+              input.value = '';
+            }
+          });
+        }
+
+        function updateBudgetLabels() {
+          const minLabel = document.getElementById('budgetMinLabel');
+          const maxLabel = document.getElementById('budgetMaxLabel');
+          if (!minLabel || !maxLabel) return;
+          minLabel.innerHTML = `${state.budgetType === 'hourly' ? 'Minimum hourly rate' : 'Minimum budget'} <span class="faint">*</span>`;
+          maxLabel.innerHTML = `${state.budgetType === 'hourly' ? 'Maximum hourly rate' : 'Maximum budget'} <span class="faint">*</span>`;
+        }
+
+        function validateForm() {
+          const title = document.getElementById('jobTitle').value.trim();
+          const description = document.getElementById('jobDescription').value.trim();
+          const category = document.getElementById('jobCategory').value;
+          const experience = document.getElementById('experienceLevel').value;
+          const budgetMin = Number(document.getElementById('budgetMin').value);
+          const budgetMax = Number(document.getElementById('budgetMax').value);
+          const deadlineValue = document.getElementById('jobDeadline').value;
+          const duration = document.getElementById('estimatedDuration').value.trim();
+          const scope = document.getElementById('jobScope').value;
+          const deliverables = document.getElementById('jobDeliverables').value
+            .split('\n').map((item) => item.trim()).filter(Boolean);
+          let valid = true;
+
+          ['titleError', 'descriptionError', 'categoryError', 'experienceError', 'budgetMinError', 'budgetMaxError', 'deadlineError', 'durationError', 'skillsError', 'scopeError', 'deliverablesError']
+            .forEach((id) => setFieldError(id, ''));
+
+          if (title.length < 8) {
+            setFieldError('titleError', 'Use a descriptive title with at least 8 characters.');
+            valid = false;
+          }
+          if (description.length < 50) {
+            setFieldError('descriptionError', 'Add at least 50 characters so applicants understand the work.');
+            valid = false;
+          }
+          if (!category) {
+            setFieldError('categoryError', 'Choose a job category.');
+            valid = false;
+          }
+          if (!experience) {
+            setFieldError('experienceError', 'Choose the required experience level.');
+            valid = false;
+          }
+          if (!Number.isFinite(budgetMin) || budgetMin <= 0) {
+            setFieldError('budgetMinError', 'Enter a budget greater than zero.');
+            valid = false;
+          }
+          if (!Number.isFinite(budgetMax) || budgetMax <= 0) {
+            setFieldError('budgetMaxError', 'Enter a maximum budget greater than zero.');
+            valid = false;
+          } else if (Number.isFinite(budgetMin) && budgetMax < budgetMin) {
+            setFieldError('budgetMaxError', 'Maximum budget must be greater than or equal to minimum budget.');
+            valid = false;
+          }
+          if (!deadlineValue) {
+            setFieldError('deadlineError', 'Choose a project deadline.');
+            valid = false;
+          } else {
+            const deadline = new Date(`${deadlineValue}T23:59:59`);
+            if (Number.isNaN(deadline.getTime()) || deadline.getTime() < Date.now()) {
+              setFieldError('deadlineError', 'Deadline must be a future date.');
+              valid = false;
+            }
+          }
+          if (!duration) {
+            setFieldError('durationError', 'Enter an estimated duration.');
+            valid = false;
+          }
+          if (!state.skills.length) {
+            setFieldError('skillsError', 'Add at least one required skill.');
+            valid = false;
+          }
+          if (!scope) {
+            setFieldError('scopeError', 'Choose a project scope.');
+            valid = false;
+          }
+          if (!deliverables.length) {
+            setFieldError('deliverablesError', 'List at least one deliverable.');
+            valid = false;
+          }
+          return valid;
+        }
+
+        async function publishJob(event) {
+          event.preventDefault();
+          if (state.submitting) return;
+          if (!validateForm()) {
+            showToast('Please fix the highlighted fields before publishing.', 'warning');
+            return;
+          }
+
+          const button = document.getElementById('publishJob');
+          const deliverables = document.getElementById('jobDeliverables').value
+            .split('\n').map((item) => item.trim()).filter(Boolean);
+          const deadline = new Date(`${document.getElementById('jobDeadline').value}T23:59:59`);
+          const scopeNotes = document.getElementById('scopeNotes').value.trim();
+          const scope = document.getElementById('jobScope').value;
+
+          const payload = {
+            title: document.getElementById('jobTitle').value.trim(),
+            description: document.getElementById('jobDescription').value.trim(),
+            category: document.getElementById('jobCategory').value,
+            budget_min: Number(document.getElementById('budgetMin').value),
+            budget_max: Number(document.getElementById('budgetMax').value),
+            budget_type: state.budgetType,
+            deadline: deadline.toISOString(),
+            estimated_duration: document.getElementById('estimatedDuration').value.trim(),
+            required_skills: state.skills,
+            experience_level: document.getElementById('experienceLevel').value,
+            scope: scopeNotes ? `${scope} — ${scopeNotes}` : scope,
+            deliverables
+          };
+
+          state.submitting = true;
+          setButtonLoading(button, true);
+          try {
+            const job = await api('/jobs', { method: 'POST', body: payload });
+            showToast('Job published successfully.', 'success');
+            renderSuccess(job);
+          } catch (error) {
+            if (error.status === 401) {
+              redirectToLogin();
+              return;
+            }
+            if (error.status === 403) {
+              state.subscription = { ...(state.subscription || {}), subscribed: false, status: 'inactive' };
+              render();
+              showToast(error.message || 'An active job posting subscription is required.', 'error');
+              return;
+            }
+            showToast(error.message || 'Could not publish this job. Please try again.', 'error');
+          } finally {
+            state.submitting = false;
+            setButtonLoading(button, false);
+          }
+        }
+
+        function renderSuccess(job) {
+          const jobLink = job && job.id ? `/jobs/detail.html?id=${encodeURIComponent(job.id)}` : '/jobs/my-listings.html';
+          root.innerHTML = `
+            <div class="job-error-page">
+              <div class="panel">
+                <div class="panel-body" style="text-align:center;padding:2.5rem 1.5rem">
+                  <div class="icon-box green" style="margin:0 auto 1rem">${icon('checkCircle', 'icon-lg')}</div>
+                  <h1 style="font-size:1.6rem">Your job is live</h1>
+                  <p class="hint mt-2">Applicants can now discover your project and submit bids. You can review applications from your listings dashboard.</p>
+                  <div class="row" style="justify-content:center;margin-top:1.5rem;flex-wrap:wrap">
+                    <a class="btn btn-primary" href="${jobLink}">${icon('eye', 'icon-sm')} View job</a>
+                    <a class="btn btn-outline" href="/jobs/my-listings.html">${icon('file', 'icon-sm')} My listings</a>
+                    <a class="btn btn-ghost" href="/jobs/post.html">${icon('plus', 'icon-sm')} Post another job</a>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+        }
+
+        async function activateSubscription(button) {
+          const confirmed = await confirmDialog({
+            title: 'Activate job posting plan?',
+            message: 'This activates the $50/year job posting subscription and allows up to 10 concurrent open jobs.',
+            confirmText: 'Activate $50/year plan',
+            cancelText: 'Not now'
+          });
+          if (!confirmed) return;
+
+          setButtonLoading(button, true);
+          try {
+            await api('/jobs/subscribe', { method: 'POST' });
+            showToast('Job posting subscription activated.', 'success');
+            await loadSubscription();
+            render();
+          } catch (error) {
+            if (error.status === 401) {
+              redirectToLogin();
+              return;
+            }
+            showToast(error.message || 'Could not activate your subscription.', 'error');
+          } finally {
+            setButtonLoading(button, false);
+          }
+        }
+
+        function bindEvents() {
+          const activate = document.getElementById('activateSubscription');
+          if (activate) activate.addEventListener('click', () => activateSubscription(activate));
+
+          const form = document.getElementById('jobForm');
+          if (!form) return;
+
+          const description = document.getElementById('jobDescription');
+          const descriptionCount = document.getElementById('descriptionCount');
+          description.addEventListener('input', () => {
+            descriptionCount.textContent = `${description.value.length} / 5000`;
+          });
+
+          document.getElementById('budgetToggle').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-budget-type]');
+            if (!button) return;
+            state.budgetType = button.dataset.budgetType;
+            document.querySelectorAll('[data-budget-type]').forEach((item) => {
+              item.classList.toggle('active', item === button);
+            });
+            updateBudgetLabels();
+          });
+
+          document.getElementById('skillSuggestions').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-skill]');
+            if (!button) return;
+            addSkill(button.dataset.skill);
+          });
+
+          form.addEventListener('submit', publishJob);
+          renderSkillChips();
+        }
+
+        async function loadSubscription() {
+          state.subscription = await api('/jobs/subscription');
+        }
+
+        async function load() {
+          try {
+            const user = await getCurrentUser();
+            if (!user) {
+              redirectToLogin();
+              return;
+            }
+            state.user = user;
+            await loadSubscription();
+            render();
+          } catch (error) {
+            if (error.status === 401) {
+              redirectToLogin();
+              return;
+            }
+            errorPage('Unable to load your job posting account', error.message || 'Please check your connection and try again.');
+          }
+        }
+
+        load();
+      });
+    })();
+  </script>
+</body>
+</html>
