@@ -125,7 +125,7 @@ async def home():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": "1.0.0"}
 
 
 # Serve HTML pages
