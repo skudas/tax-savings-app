@@ -151,6 +151,8 @@ export ENCRYPTION_KEY=$(python -c "from cryptography.fernet import Fernet; print
 docker-compose up
 
 # Run migrations (if needed)
+
+<!-- Deployment triggered with updated Supabase DB password configuration -->
 docker-compose exec app python database.py
 ```
 
